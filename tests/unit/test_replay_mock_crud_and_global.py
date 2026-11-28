@@ -880,3 +880,123 @@ async def test_emulator_atomic_rollback_on_failed_section_set_and_group_cross_fi
     sib_after_set = await api.api_call("mds", "show-host", {"name": "H_Atomic_Sib"}, domain="Branch", sid=sid)
     assert sib_after_set.success
     assert [g.get("name") for g in sib_after_set.data.get("groups", [])] == []
+
+
+@pytest.mark.spec("SCN-ITEST-022-1")
+@pytest.mark.asyncio
+async def test_scn_itest_022_1_rbac_reset_group_locks_drop_uid_and_shared_ref_cols() -> None:
+    """SCN-ITEST-022-1: manage_repository_scripts validation, reset() preservation, group cycle/parent locks, DROP_UID track, and shared where-used columns."""
+    from arodonata.core.models.sentinels import DROP_UID, NONE_TRACK_UID
+    from arodonata.testing._emulator_projection import ACCESS_CELL_LIST_FIELDS
+    from arodonata.testing._replay_queries import build_where_used_response
+
+    # 1. Invalid manage_repository_scripts rejected on init & setter; reset() preserves constructor RBAC flags
+    with pytest.raises(ValueError, match="Invalid manage_repository_scripts"):
+        FileReplayApiMock(manage_repository_scripts="read_only")
+
+    mock = FileReplayApiMock(
+        allow_one_time_script=False,
+        allow_repository_script=True,
+        manage_repository_scripts="read",
+        encode_repository_script_body_base64=True,
+    )
+    with pytest.raises(ValueError, match="Invalid manage_repository_scripts"):
+        mock.manage_repository_scripts = "deny"
+
+    mock.manage_repository_scripts = "none"
+    mock.reset()
+    assert mock.allow_one_time_script is False
+    assert mock.allow_repository_script is True
+    assert mock.manage_repository_scripts == "read"
+    assert mock.encode_repository_script_body_base64 is True
+
+    # Reset back to default write-capable RBAC for CRUD / lock checks
+    api = FileReplayApiMock()
+    sid_a, _ = await api.create_dedicated_session("mds", "Branch", session_name="sess-a")
+    sid_b, _ = await api.create_dedicated_session("mds", "Branch", session_name="sess-b")
+
+    # 2. Group non-self-containment (via members AND groups) + type check on parent groups
+    grp_res = await api.api_call("mds", "add-group", {"name": "G_Self_Parent"}, domain="Branch", sid=sid_a)
+    assert grp_res.success
+    grp_uid = grp_res.data["uid"]
+
+    self_mem = await api.api_call(
+        "mds", "set-group", {"uid": grp_uid, "members": ["G_Self_Parent"]}, domain="Branch", sid=sid_a
+    )
+    assert not self_mem.success and self_mem.status_code == 400
+
+    self_grp = await api.api_call(
+        "mds", "set-group", {"uid": grp_uid, "groups": ["G_Self_Parent"]}, domain="Branch", sid=sid_a
+    )
+    assert not self_grp.success and self_grp.status_code == 400
+
+    await api.api_call(
+        "mds", "add-host", {"name": "H_Not_A_Group", "ipv4-address": "10.99.1.1"}, domain="Branch", sid=sid_a
+    )
+    wrong_type = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Child_Bad_Grp", "ipv4-address": "10.99.1.2", "groups": ["H_Not_A_Group"]},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert not wrong_type.success and wrong_type.status_code == 400
+
+    # Publish baseline group & child, then test cross-session parent lock
+    await api.api_call("mds", "publish", {}, domain="Branch", sid=sid_a)
+    sid_b_locked, _ = await api.create_dedicated_session("mds", "Branch", session_name="sess-b-2")
+
+    lock_parent = await api.api_call(
+        "mds",
+        "add-host",
+        {"name": "H_Parent_Locker", "ipv4-address": "10.99.1.3", "groups": ["G_Self_Parent"]},
+        domain="Branch",
+        sid=sid_b_locked,
+    )
+    assert lock_parent.success
+
+    blocked_concurrent = await api.api_call(
+        "mds",
+        "set-group",
+        {"name": "G_Self_Parent", "comments": "concurrent edit"},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert not blocked_concurrent.success
+    assert blocked_concurrent.error_code == "generic_err_object_locked"
+
+    # 3. DROP_UID default track resolves to None track + shared ACCESS_CELL_LIST_FIELDS finds Access content refs
+    await api.api_call("mds", "discard", {}, domain="Branch", sid=sid_b_locked)
+    lyr_res = await api.api_call("mds", "show-access-layers", {}, domain="Branch", sid=sid_a)
+    layer_name = lyr_res.data["objects"][0]["name"]
+    drop_rule = await api.api_call(
+        "mds",
+        "add-access-rule",
+        {"layer": layer_name, "position": "bottom", "name": "DropByUid", "action": DROP_UID},
+        domain="Branch",
+        sid=sid_a,
+    )
+    assert drop_rule.success
+    assert drop_rule.data["track"]["type"]["uid"] == NONE_TRACK_UID
+
+    content_obj_uid = "00000000-0000-0000-0000-000000c00101"
+    synthetic_dom = {
+        "show-access-rulebase": {
+            "Net": {
+                "uid": "l-net",
+                "name": "Net",
+                "rulebase": [
+                    {
+                        "uid": "r-content-1",
+                        "name": "ContentRule",
+                        "type": "access-rule",
+                        "content": [{"uid": content_obj_uid, "name": "DataPattern1", "type": "data-type"}],
+                    }
+                ],
+            }
+        }
+    }
+    assert "content" in ACCESS_CELL_LIST_FIELDS
+    wu = build_where_used_response(synthetic_dom, {}, "Branch", content_obj_uid, indirect=False, max_depth=10)
+    assert wu["used-directly"]["total"] == 1
+    assert wu["used-directly"]["access-control-rules"][0]["rule-columns"] == ["content"]

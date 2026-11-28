@@ -39,6 +39,31 @@ LEGACY_V1_TABLE_FINGERPRINTS: dict[str, frozenset[str]] = {
 }
 
 
+def _validate_and_harden_sqlite_file(db_file: Path) -> None:
+    """Verify POSIX symlink/regular-file/ownership safety and enforce `0o600` on an existing SQLite file."""
+    if os.name == "nt" or not os.path.lexists(db_file):
+        return
+    try:
+        st = os.lstat(db_file)
+    except OSError as exc:
+        raise CacheError(f"Failed to stat SQLite cache file {str(db_file)!r}: {exc}") from exc
+    if stat.S_ISLNK(st.st_mode):
+        raise CacheError(f"Unsafe symlink SQLite cache file {str(db_file)!r}: symlinks are forbidden.")
+    if not stat.S_ISREG(st.st_mode):
+        raise CacheError(f"Unsafe SQLite cache path {str(db_file)!r}: expected regular file.")
+    euid = os.geteuid() if hasattr(os, "geteuid") else None
+    if euid is not None and st.st_uid not in (euid, 0):
+        raise CacheError(
+            f"Unsafe ownership on SQLite cache file {str(db_file)!r}: owned by uid {st.st_uid}, expected {euid}."
+        )
+    if (
+        (euid is None or st.st_uid == euid)
+        and (stat.S_IMODE(st.st_mode) & (stat.S_IRWXG | stat.S_IRWXO)) != 0
+        and hasattr(os, "chmod")
+    ):
+        os.chmod(db_file, 0o600)
+
+
 def _column_type_family(col_type: Any) -> str:
     """Normalize a SQLAlchemy column type into a coarse cross-dialect type family."""
     if isinstance(col_type, DateTime):
@@ -268,28 +293,7 @@ class DatabaseManager:
                                 os.chmod(created_dir, 0o700)
                     if os.name != "nt":
                         if os.path.lexists(db_file):
-                            try:
-                                st = os.lstat(db_file)
-                            except OSError as exc:
-                                raise CacheError(f"Failed to stat SQLite cache file {str(db_file)!r}: {exc}") from exc
-                            if stat.S_ISLNK(st.st_mode):
-                                raise CacheError(
-                                    f"Unsafe symlink SQLite cache file {str(db_file)!r}: symlinks are forbidden."
-                                )
-                            if not stat.S_ISREG(st.st_mode):
-                                raise CacheError(f"Unsafe SQLite cache path {str(db_file)!r}: expected regular file.")
-                            euid = os.geteuid() if hasattr(os, "geteuid") else None
-                            if euid is not None and st.st_uid not in (euid, 0):
-                                raise CacheError(
-                                    f"Unsafe ownership on SQLite cache file {str(db_file)!r}: "
-                                    f"owned by uid {st.st_uid}, expected {euid}."
-                                )
-                            if (
-                                (euid is None or st.st_uid == euid)
-                                and (stat.S_IMODE(st.st_mode) & (stat.S_IRWXG | stat.S_IRWXO)) != 0
-                                and hasattr(os, "chmod")
-                            ):
-                                os.chmod(db_file, 0o600)
+                            _validate_and_harden_sqlite_file(db_file)
                         else:
                             try:
                                 fd = os.open(str(db_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -299,7 +303,7 @@ class DatabaseManager:
                                 finally:
                                     os.close(fd)
                             except FileExistsError:
-                                pass
+                                _validate_and_harden_sqlite_file(db_file)
                 engine = create_async_engine(url, connect_args=connect_args)
             _attach_sqlite_busy_timeout(engine, busy_timeout_ms)
             return engine
@@ -346,6 +350,11 @@ class DatabaseManager:
         schema_hash = compute_schema_hash(self._metadata)
         dialect_name = self._engine.dialect.name
         span_attrs(db_dialect=dialect_name, schema_hash=schema_hash[:12])
+
+        if dialect_name == "sqlite" and not self.is_in_memory:
+            db_path = (self._engine.url.database or "").strip()
+            if db_path and db_path != ":memory:":
+                _validate_and_harden_sqlite_file(Path(db_path))
 
         async with self._init_lock, self._engine.connect() as conn:
             if dialect_name == "sqlite":

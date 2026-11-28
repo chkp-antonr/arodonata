@@ -15,7 +15,7 @@ import jsonschema
 import yaml
 
 from arodonata.core.errors import ConfigurationError
-from arodonata.cpcrud.rule_identity import rule_spec_has_delta_mapping
+from arodonata.cpcrud.rule_identity import extract_raw_verb, rule_spec_has_delta_mapping
 
 _DEFAULT_SCHEMA_PATH = Path(__file__).with_name("checkpoint_ops_schema.json")
 _SCHEMA_CACHE: dict[str, dict[str, Any]] = {}
@@ -110,24 +110,13 @@ def validate_template(
 
 
 def _resolve_rule_semantic_verb(item: dict[str, Any]) -> str:
-    raw_op = item.get("operation") or item.get("state")
-    if raw_op is None:
-        cand = item.get("action")
-        if isinstance(cand, str) and cand.strip().lower() in (
-            "present",
-            "absent",
-            "add",
-            "set",
-            "update",
-            "delete",
-        ):
-            raw_op = cand
-    return str(raw_op or "present").strip().lower()
+    return extract_raw_verb(item, is_rule=True)
 
 
 def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
     """Perform semantic validation on normalized operations (e.g. `application-site` required fields and deltas)."""
     errors: list[str] = []
+    seen_ids: set[str] = set()
     rule_types = ("access-rule", "nat-rule", "https-rule", "threat-rule", "access", "nat", "https", "threat")
 
     def _check_bucket(items: Any, path_prefix: str) -> None:
@@ -136,6 +125,16 @@ def _validate_semantic_rules(parsed: dict[str, Any]) -> list[str]:
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
+            if "id" in item and item["id"] is not None:
+                raw_id = item["id"]
+                if not isinstance(raw_id, str) or not raw_id.strip():
+                    errors.append(f"{path_prefix}[{idx}]: 'id' must be a non-empty string.")
+                else:
+                    clean_id = raw_id.strip()
+                    if clean_id in seen_ids:
+                        errors.append(f"{path_prefix}[{idx}]: duplicate operation id {clean_id!r}.")
+                    else:
+                        seen_ids.add(clean_id)
             item_type = str(item.get("type") or "").strip().lower()
             if not item_type:
                 if "rules" in path_prefix or "layer" in item or "package" in item or "rulebase_type" in item:

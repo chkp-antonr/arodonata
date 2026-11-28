@@ -1588,3 +1588,377 @@ async def test_check_where_used_blocks_referenced_entities_and_ignores_deleted_s
         assert [a.outcome for a in unblocked_plan.actions] == [Outcome.DELETE, Outcome.DELETE]
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-1")
+async def test_planner_explicit_id_collision_virtual_rule_overlay_protocol_zero_and_https_inline() -> None:
+    """DA-005, DA-027, DA-045, DA-047: Explicit act-N skipping, intra-plan virtual rule overlay, protocol=0, and HTTPS inline-layer omission."""
+    from arodonata.core.errors import ValidationError
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.models.rulebase import (
+        DomainRulebaseSnapshot,
+    )
+    from arodonata.cpcrud.planner import Planner
+
+    class _MinApi:
+        async def api_call(
+            self, mgmt: str, cmd: str, payload: dict[str, Any] | None = None, **_k: Any
+        ) -> ApiCallResult:
+            if cmd == "show-last-published-session":
+                return ApiCallResult(success=True, data={"uid": "s-1", "publish-time": {"posix": 1700000000000}})
+            if cmd in ("show-access-rulebase", "show-https-rulebase"):
+                return ApiCallResult(success=True, data={"uid": "l-1", "name": "Network", "rulebase": [], "total": 0})
+            return ApiCallResult(success=False, status_code=404, error_code="generic_err_object_not_found")
+
+        async def api_query(self, *_a: Any, **_k: Any) -> ApiQueryResult:
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+    class _MinCache:
+        async def get_sync_state(self, *_a: Any, **_k: Any) -> DomainSyncState | None:
+            return None
+
+        async def get_objects(self, **_k: Any) -> list[CPObject]:
+            return []
+
+        async def get_object_by_uid(self, *_a: Any) -> CPObject | None:
+            return None
+
+        async def get_services(self, **_k: Any) -> list[CPService]:
+            return []
+
+        async def get_service_by_uid(self, *_a: Any) -> CPService | None:
+            return None
+
+        async def get_rulebase_snapshot(self, *_a: Any, **_k: Any) -> DomainRulebaseSnapshot | None:
+            return None
+
+    planner = Planner(api=_MinApi(), cache=_MinCache(), default_mgmt_name="mds1")  # type: ignore[arg-type]
+
+    # DA-005: Reject blank/duplicate IDs
+    with pytest.raises(ValidationError):
+        await planner.decide(
+            {"domain_name": "Corp", "objects": [{"id": "  ", "type": "host", "name": "h0", "ipv4-address": "1.1.1.1"}]}
+        )
+    with pytest.raises(ValidationError):
+        await planner.decide(
+            {
+                "domain_name": "Corp",
+                "objects": [
+                    {"id": "dup", "type": "host", "name": "h1", "ipv4-address": "1.1.1.1"},
+                    {"id": "dup", "type": "host", "name": "h2", "ipv4-address": "1.1.1.2"},
+                ],
+            }
+        )
+
+    # DA-005 + DA-027 + DA-045 + DA-047 combined plan
+    plan = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "services": [
+                {"id": "act-1", "type": "service-other", "name": "hopopt-0", "ip_protocol": 0},
+            ],
+            "rules": [
+                {
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "r-chain",
+                    "action": "Accept",
+                    "source": ["Any"],
+                    "destination": ["Any"],
+                    "service": ["Any"],
+                },
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "r-chain",
+                    "comments": "updated in-plan",
+                },
+                {
+                    "type": "https-rule",
+                    "layer": "HTTPS Inspection",
+                    "name": "https-r1",
+                    "inline_layer": "should-not-send",
+                },
+            ],
+        }
+    )
+    ids = [a.action_id for a in plan.actions]
+    assert len(set(ids)) == len(ids)
+    assert ids[0] == "act-1"
+    assert ids[1] == "act-2"
+    svc_act, r_add, r_set, https_add = plan.actions
+    assert svc_act.payload["ip-protocol"] == 0
+    assert r_add.outcome == Outcome.CREATE
+    assert r_set.outcome == Outcome.UPDATE
+    assert "uid" not in r_set.payload
+    assert r_set.payload["name"] == "r-chain"
+    assert r_add.action_id in r_set.depends_on
+    assert "inline-layer" not in https_add.payload
+
+
+@pytest.mark.spec("SCN-CPCRUD-019-1")
+@pytest.mark.asyncio
+async def test_scn_cpcrud_019_1_virtual_rule_ordering_delta_safety_unnamed_guard_and_where_used() -> None:
+    """SCN-CPCRUD-019-1: multi-create & rename above cleanup, sequential delta widening guard, unnamed rule fail-closed, and active where-used overlay."""
+    from arodonata.core.models.rulebase import AccessRuleEntry, DomainRulebaseSnapshot
+
+    cleanup_rule = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="l-net",
+        layer_name="Network",
+        uid="uid-cleanup",
+        name="Cleanup rule",
+        position=2,
+        action="Drop",
+        source=["Any"],
+        destination=["Any"],
+        service=["Any"],
+    )
+    existing_rule = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="l-net",
+        layer_name="Network",
+        uid="uid-allow-web",
+        name="AllowWeb",
+        position=1,
+        action="Accept",
+        source=["h-a", "h-b"],
+        destination=["Any"],
+        service=["Any"],
+        raw_data={
+            "uid": "uid-allow-web",
+            "name": "AllowWeb",
+            "action": {"name": "Accept"},
+            "source": ["h-a", "h-b"],
+            "destination": ["Any"],
+            "service": ["Any"],
+        },
+    )
+    objs_dict = {
+        "h-a": {"uid": "h-a", "name": "Host_A", "type": "host"},
+        "h-b": {"uid": "h-b", "name": "Host_B", "type": "host"},
+        "g-1": {"uid": "g-1", "name": "OldGrp", "type": "group"},
+        "h-del": {"uid": "h-del", "name": "H_Decom", "type": "host"},
+        "any": {"uid": "97aeb369-9aea-11d5-bd16-0090272ccb30", "name": "Any", "type": "CpmiAnyObject"},
+    }
+    snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        access_rules=[existing_rule, cleanup_rule],
+    )
+
+    class _OverlayApi:
+        async def api_call(self, _m: str, cmd: str, payload: dict[str, Any] | None = None, **_kw: Any) -> Any:
+            if cmd == "show-last-published-session":
+                return ApiCallResult(success=True, data={"session-uid": "s-1"})
+            if cmd == "show-access-rulebase":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "l-net",
+                        "name": "Network",
+                        "total": 2,
+                        "to": 2,
+                        "objects-dictionary": list(objs_dict.values()),
+                        "rulebase": [
+                            existing_rule.raw_data,
+                            {
+                                "uid": "uid-cleanup",
+                                "name": "Cleanup rule",
+                                "action": {"name": "Drop"},
+                                "source": ["Any"],
+                                "destination": ["Any"],
+                                "service": ["Any"],
+                            },
+                        ],
+                    },
+                )
+            if cmd in {"show-object", "show-host", "show-group"}:
+                n = str((payload or {}).get("name") or "")
+                u = str((payload or {}).get("uid") or "")
+                obj_match = objs_dict.get(u) if u else None
+                if obj_match is None and n:
+                    for v in objs_dict.values():
+                        if v["name"] == n:
+                            obj_match = v
+                            break
+                if obj_match is not None:
+                    if cmd == "show-object":
+                        return ApiCallResult(success=True, data={"object": obj_match})
+                    return ApiCallResult(success=True, data=obj_match)
+                return ApiCallResult(success=False, status_code=404, error_code="generic_err_object_not_found")
+            if cmd == "where-used":
+                n = str((payload or {}).get("name") or "")
+                u = str((payload or {}).get("uid") or "")
+                if n == "H_Decom" or u == "h-del":
+                    return ApiCallResult(
+                        success=True,
+                        data={
+                            "used-directly": {
+                                "total": 2,
+                                "access-control-rules": [
+                                    {"rule": {"uid": "uid-allow-web", "name": "AllowWeb"}, "position": 1}
+                                ],
+                                "objects": [{"uid": "g-1", "name": "OldGrp", "type": "group"}],
+                            },
+                            "used-indirectly": {"total": 0},
+                        },
+                    )
+                return ApiCallResult(
+                    success=True, data={"used-directly": {"total": 0}, "used-indirectly": {"total": 0}}
+                )
+            return ApiCallResult(success=True, data={})
+
+    class _OverlayCache:
+        async def get_sync_state(self, *_a: Any) -> None:
+            return None
+
+        async def get_objects(self, **_k: Any) -> list[CPObject]:
+            return [
+                CPObject(
+                    mgmt_name="mds1", domain_name="Corp", uid="h-a", name="Host_A", type="host", ipv4_address="10.0.0.1"
+                ),
+                CPObject(
+                    mgmt_name="mds1", domain_name="Corp", uid="h-b", name="Host_B", type="host", ipv4_address="10.0.0.2"
+                ),
+                CPObject(mgmt_name="mds1", domain_name="Corp", uid="g-1", name="OldGrp", type="group"),
+                CPObject(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    uid="h-del",
+                    name="H_Decom",
+                    type="host",
+                    ipv4_address="10.0.0.9",
+                ),
+            ]
+
+        async def get_object_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_object_by_name(self, _m: str, _d: str, name: str) -> CPObject | None:
+            for o in await self.get_objects():
+                if o.name == name:
+                    return o
+            return None
+
+        async def get_services(self, **_k: Any) -> list[CPService]:
+            return []
+
+        async def get_service_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_rulebase_snapshot(self, *_a: Any, **_k: Any) -> DomainRulebaseSnapshot | None:
+            return snap
+
+    planner = Planner(api=_OverlayApi(), cache=_OverlayCache(), default_mgmt_name="mds1")  # type: ignore[arg-type]
+
+    # 1. Rename existing rule + create two position="bottom" rules -> BOTH stay above uid-cleanup!
+    plan_order = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "operations": [
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "AllowWeb",
+                    "new-name": "AllowWebRenamed",
+                },
+                {
+                    "operation": "add",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Rule_1",
+                    "action": "Accept",
+                    "source": ["Host_A"],
+                },
+                {
+                    "operation": "add",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "Rule_2",
+                    "action": "Accept",
+                    "source": ["Host_B"],
+                },
+            ],
+        }
+    )
+    add1, add2 = plan_order.actions[1], plan_order.actions[2]
+    assert add1.outcome == Outcome.CREATE, add1.error
+    assert add2.outcome == Outcome.CREATE, add2.error
+    assert add1.payload["position"] == {"above": "uid-cleanup"}
+    assert add2.payload["position"] == {"above": "uid-cleanup"}
+
+    # 2. Sequential {remove: [Host_A]} then {remove: [Host_B]} MUST fail closed with DiffSafetyError (no silent Any widening)
+    plan_widen = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "operations": [
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "AllowWeb",
+                    "source": {"remove": ["Host_A"]},
+                },
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "name": "AllowWeb",
+                    "source": {"remove": ["Host_B"]},
+                },
+            ],
+        }
+    )
+    assert plan_widen.actions[0].outcome == Outcome.UPDATE
+    assert plan_widen.actions[1].outcome == Outcome.ERROR
+    assert "Any" in (plan_widen.actions[1].error or "")
+
+    # 3. Unnamed virtual rule created in Step 1 fails closed on Step 2 match instead of sending "planned:" UID
+    plan_unnamed = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "operations": [
+                {
+                    "id": "u1",
+                    "operation": "add",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "action": "Accept",
+                    "source": ["Host_A"],
+                },
+                {
+                    "operation": "set",
+                    "type": "access-rule",
+                    "layer": "Network",
+                    "source": ["Host_A"],
+                    "action": "Accept",
+                    "comments": "v2",
+                },
+            ],
+        }
+    )
+    assert plan_unnamed.actions[0].outcome == Outcome.CREATE
+    assert plan_unnamed.actions[1].outcome == Outcome.ERROR
+    assert "planned:" not in str(plan_unnamed.actions[1].payload)
+
+    # 4. Renamed group OldGrp->NewGrp does NOT count as virtually deleted for H_Decom check_where_used;
+    #    whereas deleting AllowWeb + keeping NewGrp renamed still blocks via OldGrp!
+    plan_wu = await planner.decide(
+        {
+            "domain_name": "Corp",
+            "operations": [
+                {"operation": "delete", "type": "access-rule", "layer": "Network", "name": "AllowWeb"},
+                {"operation": "set", "type": "group", "name": "OldGrp", "new-name": "NewGrp"},
+                {"operation": "delete", "type": "host", "name": "H_Decom", "check_where_used": True},
+            ],
+        }
+    )
+    del_host_act = plan_wu.actions[2]
+    assert del_host_act.outcome == Outcome.ERROR
+    assert "OldGrp" in (del_host_act.error or "")
+    assert "AllowWeb" not in (del_host_act.error or "")

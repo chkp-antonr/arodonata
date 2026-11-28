@@ -5157,3 +5157,359 @@ async def test_stream_refresh_completion_order_lpm_annotation_manual_export_and_
     for script_text in (inline_script, repo_script):
         assert 'sub(/^Name:[ \\t]*/, "")' in script_text
         assert "$2 == target" not in script_text
+
+
+@pytest.mark.spec("SCN-TOPO-024-1")
+@pytest.mark.asyncio
+async def test_scn_topo_024_1_cache_mode_isolation_ttl_coalescing_and_domain_hydration() -> None:
+    """SCN-TOPO-024-1: targeted cache mode has zero SQL writes, isolates WriteSession, separates TTL flights, and hydrates missing domains."""
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import AsyncMock
+
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.models.domains import DomainSyncState
+
+    settings = ArodonataSettings(
+        mgmt_name="mds1",
+        mgmt_ip="10.0.0.1",
+        api_key="secret",
+        cache_ttl=300.0,
+    )
+    api = TopologyFakeApi()
+    db = DatabaseManager()
+    await db.initialize()
+    try:
+        cache = SqlCacheAdapter(db)
+        lock_port = SqlLockAdapter(db)
+        dom_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+        dom_svc.tracker.mark_refreshed("mds1")
+        await cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d-global", name="Global", active_ip="10.0.0.1", is_global=True),
+                DomainInfo(mgmt_name="mds1", uid="d-corp", name="Corp", active_ip="10.1.0.1", active_mds_ip="10.0.0.1"),
+                DomainInfo(
+                    mgmt_name="mds1", uid="d-empty", name="EmptyDom", active_ip="10.4.0.1", active_mds_ip="10.0.0.1"
+                ),
+            ]
+        )
+        coordinator = DomainSyncCoordinator(
+            settings=settings,
+            api=api,
+            cache=cache,
+            lock_port=lock_port,
+            domain_service=dom_svc,
+        )
+        asset_svc = AssetRefreshService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        object_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coordinator)
+        topo_svc = TopologyService(
+            settings=settings,
+            api=api,
+            cache=cache,
+            coordinator=coordinator,
+            asset_service=asset_svc,
+            object_service=object_svc,
+        )
+
+        # Warm domain + topology once so persistent SQL rows exist
+        first = await topo_svc.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="live")
+        assert "mds1:Corp" in first.refreshed_domains
+
+        # 1. Targeted refresh_topology(mode="cache") performs zero SQL writes even with spy on cache writers
+        upsert_spy = AsyncMock(side_effect=AssertionError("mode='cache' must not write SQL topology"))
+        sync_spy = AsyncMock(side_effect=AssertionError("mode='cache' must not write sync state"))
+        orig_upsert = cache.upsert_gateway_topology
+        orig_set_sync = cache.upsert_sync_state
+        cache.upsert_gateway_topology = upsert_spy  # type: ignore[method-assign]
+        cache.upsert_sync_state = sync_spy  # type: ignore[method-assign]
+        try:
+            targeted_cache = await topo_svc.refresh_topology(
+                mgmt_name="mds1",
+                domains=["Corp"],
+                gateways=["corp-perimeter-cluster"],
+                mode="cache",
+            )
+            assert targeted_cache.failed_domains == {}
+        finally:
+            cache.upsert_gateway_topology = orig_upsert  # type: ignore[method-assign]
+            cache.upsert_sync_state = orig_set_sync  # type: ignore[method-assign]
+
+        # 2. WriteSession uncommitted overlay object does NOT leak into shared SQL topology persistence
+        ws = WriteSession(mgmt_name="mds1", domain_name="Corp", sid="sid-ws-iso", server_ip="10.1.0.1")
+        ws.overlay.record_object_upsert(
+            CPObject(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="net-specific-1",
+                name="Net_Specific_Overlay",
+                type="network",
+                subnet4="198.51.100.0",
+                mask_length4=24,
+            )
+        )
+        with write_session_context(ws):
+            await topo_svc.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="force")
+
+        stored_entries = await cache.get_gateway_topology(mgmt_name="mds1", domain_name="Corp")
+        assert all(e.cidr_or_range != "198.51.100.0/24" for e in stored_entries)
+
+        # 3. Distinct cache_ttl callers get separate single-flight keys (never coalesce short-TTL onto long-TTL)
+        stale_sync = DomainSyncState(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            scope="topology",
+            item_type="*",
+            item_count=len(stored_entries),
+            last_session_uid="sess-old",
+            synced_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=60),
+        )
+        await cache.upsert_sync_state(stale_sync)
+
+        async def _call_with_ttl(ttl: float) -> Any:
+            return await topo_svc.refresh_topology(mgmt_name="mds1", domains=["Corp"], mode="smart", cache_ttl=ttl)
+
+        res_short, res_long = await asyncio.gather(_call_with_ttl(5.0), _call_with_ttl(3600.0))
+        assert "mds1:Corp" in res_short.refreshed_domains
+        assert "mds1:Corp" in res_long.skipped_domains
+
+        # 4. collect_gateway_routes(mgmt_name=None) hydrates uncached requested domains on partially cached servers
+        await asset_svc.refresh_assets(mgmt_name="mds1", domains=["Corp"], mode="force")
+        hydrated_domains: list[str] = []
+        orig_refresh_assets = asset_svc.refresh_assets
+
+        async def _track_refresh(
+            *,
+            mgmt_name: str | None = None,
+            domains: Any = None,
+            **kwargs: Any,
+        ) -> Any:
+            if isinstance(domains, list):
+                hydrated_domains.extend(str(d) for d in domains)
+            return await orig_refresh_assets(mgmt_name=mgmt_name, domains=domains, **kwargs)
+
+        asset_svc.refresh_assets = _track_refresh  # type: ignore[method-assign]
+        try:
+            await topo_svc.collect_gateway_routes(
+                mgmt_name=None,
+                domains=["Corp", "EmptyDom"],
+            )
+        finally:
+            asset_svc.refresh_assets = orig_refresh_assets  # type: ignore[method-assign]
+        assert "EmptyDom" in hydrated_domains
+    finally:
+        await db.close()
+
+
+@pytest.mark.spec("SCN-TOPO-024-2")
+def test_scn_topo_024_2_ecmp_proto_routed_vsx_bundle_and_route_scripts_hash_parity() -> None:
+    """SCN-TOPO-024-2: multi-line ECMP, Gaia proto routed upgrades, VSX error preservation, safe dest normalization, and byte-identical scripts."""
+    import hashlib
+
+    from arodonata.core.models.topology import GatewayCliResult
+    from arodonata.core.services.topology.normalizer import _parse_route_destination
+    from arodonata.core.services.topology.route_parsers import (
+        extract_vs_slice_from_bundle,
+        parse_combined_cli_routes_with_status,
+        parse_ip_route_show,
+    )
+    from arodonata.core.services.topology.route_scripts import (
+        VSX_BUNDLE_END_MARKER,
+        VSX_BUNDLE_START_MARKER,
+        build_route_collection_repository_script,
+        build_route_collection_script,
+    )
+
+    # 1. Multi-line ECMP route parsing preserves both nexthop legs
+    ecmp_ip_out = "\n".join(
+        [
+            "10.88.0.0/16 proto static metric 20",
+            "        nexthop via 192.168.1.1 dev eth1 weight 1",
+            "        nexthop via 192.168.2.1 dev eth2 weight 1",
+        ]
+    )
+    ecmp_routes = parse_ip_route_show(ecmp_ip_out)
+    assert [(r.interface_name, str(r.nexthop), r.source_type) for r in ecmp_routes] == [
+        ("eth1", "192.168.1.1", "gaia_static_route"),
+        ("eth2", "192.168.2.1", "gaia_static_route"),
+    ]
+
+    # 2. Gaia proto routed routes upgrade to bgp_route / ospf_route when clish confirms dynamic protocol
+    combined_stdout = "\n".join(
+        [
+            "===ARODONATA_IP_ROUTE_START===",
+            "172.22.0.0/16 via 10.1.1.2 dev eth1 proto routed",
+            "===ARODONATA_IP_ROUTE_END===",
+            "===ARODONATA_CLISH_ROUTE_START===",
+            "B 172.22.0.0/16 via 10.1.1.2, eth1, cost 0/20",
+            "===ARODONATA_CLISH_ROUTE_END===",
+        ]
+    )
+    parsed_routes, _truncated = parse_combined_cli_routes_with_status(combined_stdout)
+    assert len(parsed_routes) == 1
+    assert parsed_routes[0].source_type == "bgp_route"
+
+    # 3. extract_vs_slice_from_bundle preserves upstream failed status even when bundle marker/VS is absent
+    raw_bundle_out = f"{VSX_BUNDLE_START_MARKER}\n{VSX_BUNDLE_END_MARKER}\n"
+    failed_base = GatewayCliResult(
+        success=False,
+        stdout=raw_bundle_out,
+        stderr="SSH transport timed out",
+        exit_code=1,
+        error_code="ssh_timeout",
+        error_message="SSH transport timed out",
+    )
+    sliced = extract_vs_slice_from_bundle(raw_bundle_out, vs_name="VS_1", base_result=failed_base)
+    assert sliced.success is False
+    assert "SSH transport timed out" in (sliced.error_message or "")
+
+    # 4. _parse_route_destination supports subnet4/mask-length4 and rejects non-default empty dicts instead of 0.0.0.0/0
+    assert str(_parse_route_destination({"subnet4": "10.33.0.0", "mask-length4": 16})) == "10.33.0.0/16"
+    assert str(_parse_route_destination({"destination": "default"})) == "0.0.0.0/0"
+    assert str(_parse_route_destination({"type": "default"})) == "0.0.0.0/0"
+    assert _parse_route_destination({"ipv6-destination": "2001:db8::/32"}) is None
+
+    # 5. All 8 canonical route_scripts.py outputs remain byte-for-byte identical
+    expected_hashes = {
+        "inline_default": hashlib.sha256(build_route_collection_script().encode()).hexdigest(),
+        "inline_max": hashlib.sha256(build_route_collection_script(max_routes=500).encode()).hexdigest(),
+        "inline_vsid": hashlib.sha256(build_route_collection_script(vsid=2, max_routes=500).encode()).hexdigest(),
+        "inline_vsid_nolim": hashlib.sha256(build_route_collection_script(vsid=2).encode()).hexdigest(),
+        "inline_vsname": hashlib.sha256(
+            build_route_collection_script(vs_name="VS Core", max_routes=500).encode()
+        ).hexdigest(),
+        "inline_vsname_nolim": hashlib.sha256(build_route_collection_script(vs_name="VS Core").encode()).hexdigest(),
+        "repo_default": hashlib.sha256(build_route_collection_repository_script().encode()).hexdigest(),
+        "repo_custom": hashlib.sha256(
+            build_route_collection_repository_script(default_max_routes=1000, default_skip_threshold=500).encode()
+        ).hexdigest(),
+    }
+    assert expected_hashes == {
+        "inline_default": "9235a208c10d57dee82bb2c6a4905857a3268686aecde0aa3e93e73f7fdde879",
+        "inline_max": "2458243a4ec8dd5e8f2bcfc609179a3b15dfd5844d84d0a78ebcf7d1fe414f59",
+        "inline_vsid": "03508ef62c651ae4a7eabab122261d05db72d65c514c5fafa30f883242d18afb",
+        "inline_vsid_nolim": "d70866004de72f9e2915363f8fdb4ed367ef392ef82f4712d4be1446bee0f9ba",
+        "inline_vsname": "89beb66993825d07a16583a51f0ebeebd61cc8ab504ec0a7d71b5bb546be429b",
+        "inline_vsname_nolim": "0d6a0ed22f5d581ff1f4ca1f16f90ec11eb16be7e9c4c30e93a476a533ea1731",
+        "repo_default": "422cce481787c98ad58f0a77670a5b9a75b60f581adefbf2dec3bc72e74c9cea",
+        "repo_custom": "0003137e229265c56337999c20dfd8767c00106dcf3b45c696900b46c5b98add",
+    }
+
+
+@pytest.mark.spec("SCN-TOPO-024-3")
+def test_scn_topo_024_3_exclusion_group_same_if_summary_scoring_and_case_insensitive_lookup() -> None:
+    """SCN-TOPO-024-3: group-with-exclusion subtracts except clauses, same-interface summaries suppress false conflicts, and lookups unify exact+.lower()."""
+    from arodonata.core.config import TopologyConfidenceWeights
+    from arodonata.core.models.topology import GatewayTopologyEntry, TopologyAnnotation
+    from arodonata.core.services.topology.objects import (
+        _enqueue_missing_cached_members,
+        _expand_cp_object,
+        _index_objects,
+        _lookup_indexed_object,
+        _unpack_topology_raw_object,
+    )
+    from arodonata.core.services.topology.scoring import _score_interface_group
+
+    # 1. group-with-exclusion unpacks/walks both include and except, and subtracts except intervals
+    raw_gwe = {
+        "uid": "gwe-1",
+        "name": "G_Corp_Except_DMZ",
+        "type": "group-with-exclusion",
+        "include": {
+            "uid": "net-inc",
+            "name": "Net_10_20",
+            "type": "network",
+            "subnet4": "10.20.0.0",
+            "mask-length4": 24,
+        },
+        "except": {
+            "uid": "net-exc",
+            "name": "Net_10_20_128",
+            "type": "network",
+            "subnet4": "10.20.0.128",
+            "mask-length4": 25,
+        },
+    }
+    unpacked, incomplete = _unpack_topology_raw_object("mds1", "Corp", raw_gwe)
+    assert incomplete == []
+    assert {o.uid for o in unpacked} == {"gwe-1", "net-inc", "net-exc"}
+    obj_by_uid, obj_by_name = _index_objects(unpacked, domain_name="Corp")
+
+    # Mixed-case lookup finds object via unified _lookup_indexed_object
+    assert _lookup_indexed_object("GWE-1", None, obj_by_uid, obj_by_name) is not None
+    assert _lookup_indexed_object(None, "g_corp_except_dmz", obj_by_uid, obj_by_name) is not None
+
+    # Cached enqueue discovers missing except object even when include is already cached
+    obj_by_uid.pop("net-exc", None)
+    obj_by_name.pop("Net_10_20_128", None)
+    obj_by_name.pop("net_10_20_128", None)
+    pending: list[tuple[str | None, str | None]] = []
+    _enqueue_missing_cached_members(
+        unpacked[0],
+        obj_by_uid=obj_by_uid,
+        obj_by_name=obj_by_name,
+        checked_cached_uids=set(),
+        is_trusted_cached=lambda _o: True,
+        pending_out=pending,
+    )
+    assert ("net-exc", "Net_10_20_128") in pending
+
+    # Re-index complete set and verify subtraction leaves only 10.20.0.0/25 (excludes 10.20.0.128/25)
+    obj_by_uid, obj_by_name = _index_objects(unpacked, domain_name="Corp")
+    expanded = _expand_cp_object(unpacked[0], obj_by_uid=obj_by_uid, obj_by_name=obj_by_name)
+    assert [row[0] for row in expanded] == ["10.20.0.0/25"]
+
+    # 2. Same-interface covering live summary + wildcard annotation in _score_interface_group
+    static_24 = GatewayTopologyEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="gw-1",
+        gateway_name="gw-1",
+        gateway_type="cluster",
+        interface_name="eth1",
+        cidr_or_range="10.50.1.0/24",
+        ip_first_int=(10 << 24) | (50 << 16) | (1 << 8),
+        ip_last_int=(10 << 24) | (50 << 16) | (1 << 8) | 255,
+        prefix_len=24,
+        source_type="interface_specific",
+        topology_zone="internal",
+        anti_spoofing_mode="prevent",
+    )
+    live_16 = GatewayTopologyEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        gateway_uid="gw-1",
+        gateway_name="gw-1",
+        gateway_type="cluster",
+        interface_name="eth1",
+        cidr_or_range="10.50.0.0/16",
+        ip_first_int=(10 << 24) | (50 << 16),
+        ip_last_int=(10 << 24) | (50 << 16) | 65535,
+        prefix_len=16,
+        source_type="bgp_route",
+        topology_zone="internal",
+    )
+    weights = TopologyConfidenceWeights()
+    _, _conf, is_standby, deltas, warns = _score_interface_group(
+        if_name="eth1",
+        matching_entries=[static_24],
+        all_gw_entries=[static_24, live_16],
+        has_live_routes=True,
+        ann_by_if_cidr={},
+        ann_by_if_wildcard={
+            "eth1": TopologyAnnotation(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                gateway_uid="gw-1",
+                gateway_name="gw-1",
+                interface_name="eth1",
+                cidr_or_range="*",
+                disposition="standby_dynamic",
+            )
+        },
+        weights=weights,
+        internal_live_entries=[live_16],
+    )
+    assert all(d.code != "conflict_missing_in_live_routes" for d in deltas)
+    assert is_standby is True
+    assert any(d.code == "admin_standby_dynamic" for d in deltas)
+    assert warns == []

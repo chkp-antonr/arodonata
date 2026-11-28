@@ -511,3 +511,45 @@ When a domain's service cache slice is absent or stale during `CPCRUDService.pla
 - **GIVEN** an existing host, service, `group`, or `service-group` with `groups=[]` and `tags=[]` that was updated to add parent `groups` or `tags`
 - **WHEN** `CPCRUDService.inverse(plan, report)` generates a compensating rollback template
 - **THEN** the rollback `set-*` operations SHALL emit `groups: []` and `tags: []` whenever those fields were mutated from empty prior state
+
+### Requirement: Strict Operation IDs, Virtual Rule Overlay Integrity, Protocol Zero Fidelity, and Concurrent/Owner-Fair Execution
+
+**ID**: REQ-CPCRUD-018\
+**Intent**: Reject blank or duplicate template IDs via unified verb normalization, prevent intra-plan virtual rule traffic collisions, preserve `ip_protocol=0` and access inline layers, restore empty description/additional-categories fields, and make concurrent executor/registry state race-free and owner-fair.\
+**Non-goals**: Staged baseline verification (`REQ-CPCRUD-017`) or schema path settings (`REQ-CONFIG-009`).
+
+CPCRUD SHALL reject blank/duplicate IDs via shared verb parsing, preserve `ip_protocol=0`, dereference `AccessRuleEntry` inline layers, isolate planned virtual rule traffic matching, restore empty `description`/`additional-categories` on rolling back `UPDATE`s, return per-call `ApplyReport`s, and evict staged sessions owner-fairly.
+
+#### Scenario: SCN-CPCRUD-018-1 — Non-blank unique operation IDs, intra-plan virtual rule overlays, IP protocol zero, inline-layer deref, and empty-field inverse rollback
+
+- **GIVEN** templates with blank or duplicate `id` fields, virtual rules created then chained in one plan (`explicit id` or distinct-named bottom rules), a service with `ip_protocol=0` (`HOPOPT`), an `AccessRuleEntry` with `inline-layer`, or an `UPDATE` adding `description`/`additional-categories` from empty prior state
+- **WHEN** validation, planning, diffing, or `inverse()` runs
+- **THEN** validator and planner SHALL reject blank/duplicate IDs via shared verb normalization, planner SHALL update virtual rule overlays without colliding differently named rules across traffic tuples, differ SHALL preserve `0` protocols and access inline layers, and inverse SHALL emit empty `""`/`[]` restoration values
+
+#### Scenario: SCN-CPCRUD-018-2 — Race-free concurrent Executor.apply reports and owner-fair staged session registry eviction
+
+- **GIVEN** concurrent `Executor.apply()` coroutines on one `Executor` instance, or a full 256-entry staged session registry holding single-session peers alongside a greedy multi-session owner
+- **WHEN** concurrent applies execute or a new owner stages a 257th session
+- **THEN** each `Executor.apply()` call SHALL return its own isolated `ApplyReport` from the completion event without shared-attribute races, and staged registry eviction SHALL discard the new or greedy multi-session owner's oldest SID while preserving single-session peers
+
+### Requirement: Virtual Rule Cleanup Anchoring, Full Delta Overlays, and Context-Aware Staged Isolation
+
+**ID**: REQ-CPCRUD-019\
+**Intent**: Prevent intra-plan rules from landing below cleanup rules, bypassing anti-`Any`-widening guards, failing `where-used` checks, or evicting peer MCP callers' staged sessions.\
+**Non-goals**: Altering CPCRUD YAML/JSON template schema syntax (`REQ-CPCRUD-001`).
+
+Virtual rule overlays MUST preserve renamed indices, anchor created rules before trailing cleanup rules, apply incremental `{add, remove}` cell deltas and rule attributes, and fail closed on unnamed virtual rule updates/deletes. Virtual `where-used` filtering MUST recognize virtually deleted rules and active renamed entities, and `Executor` staged session tracking MUST isolate distinct `UserContext` callers without single-peer eviction.
+
+#### Scenario: SCN-CPCRUD-019-1 — Cleanup-safe virtual rule placement, delta overlays, and where-used accuracy
+
+- **GIVEN** a plan that renames or creates rules before adding `position="bottom"` rules, patches list cells via `{add, remove}` deltas, deletes or renames referenced entities, or targets an unnamed planned rule
+- **WHEN** the CPCRUD planner resolves rule positions, updates virtual overlays, checks `where-used`, or validates intra-plan targets
+- **THEN** renamed rules SHALL stay above trailing cleanup rules, virtual updates SHALL preserve `{add, remove}` deltas and rule fields for anti-`Any`-widening checks, and unnamed virtual rule mutations SHALL fail closed at plan time
+- **AND** `where-used` checks SHALL ignore virtually deleted rules and keep active renamed referencing entities
+
+#### Scenario: SCN-CPCRUD-019-2 — UserContext isolation and peer-safe eviction in Executor staged sessions
+
+- **GIVEN** distinct authenticated `UserContext` callers sharing one `ArodonataClient` / `Executor` without separate `AuthContext` credentials at full 256-entry capacity
+- **WHEN** `Executor` registers a newly staged Check Point session
+- **THEN** `owner_key` SHALL incorporate `UserContext` caller identity alongside `AuthContext`
+- **AND** eviction SHALL never discard a distinct single-session peer's uncommitted session

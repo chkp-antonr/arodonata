@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import ipaddress
 import re
 from collections.abc import Sequence
@@ -21,7 +22,6 @@ MAX_IPV4_INT: Final[int] = 4294967295
 READONLY_EXACT_COMMANDS: Final[frozenset[str]] = frozenset(
     {
         "where-used",
-        "verify-policy",
         "keepalive",
     }
 )
@@ -249,11 +249,39 @@ def parse_cidr_or_range_bounds(cidr_or_range: str) -> tuple[int, int, int] | Non
         return None
 
 
+def escape_markdown_cell(val: Any) -> str:
+    """Escape HTML tags, newlines, backslashes, pipes, and Markdown link/code delimiters in table cells."""
+    if val is None:
+        return ""
+    raw = ", ".join(str(x) for x in val) if isinstance(val, list) else str(val)
+    escaped = html.escape(raw, quote=False)
+    return (
+        escaped.replace("\\", "\\\\")
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("|", "\\|")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("`", "\\`")
+    )
+
+
+def escape_markdown_code(val: Any) -> str:
+    """Neutralize newlines, backticks, and GFM table pipes inside inline Markdown code spans without mangling paths."""
+    if val is None:
+        return ""
+    cleaned = str(val).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("`", "'")
+    return re.sub(r"(\\*)\|", lambda m: (m.group(1) * 2) + r"\|", cleaned)
+
+
 __all__ = [
     "MAX_IPV4_INT",
     "READONLY_EXACT_COMMANDS",
     "UUID_RE",
     "effective_range_prefix_len",
+    "escape_markdown_cell",
+    "escape_markdown_code",
     "format_composite_id",
     "format_host_attr_for_url",
     "is_readonly_command",

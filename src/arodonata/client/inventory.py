@@ -215,6 +215,8 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         domain: str | None = None,
         *,
         types: Sequence[str] | None = None,
+        roles: Sequence[str] | None = None,
+        platforms: Sequence[str] | None = None,
         include_global: bool = False,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
@@ -225,6 +227,8 @@ class ClientInventoryMixin(ClientLifecycleMixin):
             mgmt_name=mgmt_name,
             domain=domain,
             types=types,
+            roles=roles,
+            platforms=platforms,
             include_global=include_global,
             cache_mode=cache_mode,
             cache_ttl=cache_ttl,
@@ -483,6 +487,10 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         domain_name: str | None = None,
         domains: Sequence[str] | None = None,
         types: Sequence[str] | None = None,
+        roles: Sequence[str] | None = None,
+        platforms: Sequence[str] | None = None,
+        is_policy_target: bool | None = None,
+        is_execution_target: bool | None = None,
         scope_origin: Literal["all", "local", "global"] = "all",
         name_pattern: str | None = None,
         ip_subnet: str | None = None,
@@ -499,13 +507,17 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         cache_mode: CacheMode = "cache",
         cache_ttl: float | None = None,
     ) -> dict[str, Any]:
-        """Execute structured cross-domain filtering, grouping, and counting over cached objects and services."""
+        """Execute structured cross-domain filtering, grouping, and counting over cached objects, services, and assets."""
         await self._ensure_initialized()
         return await self._search_service.query_objects(
             mgmt_name=mgmt_name,
             domain_name=domain_name,
             domains=domains,
             types=types,
+            roles=roles,
+            platforms=platforms,
+            is_policy_target=is_policy_target,
+            is_execution_target=is_execution_target,
             scope_origin=scope_origin,
             name_pattern=name_pattern,
             ip_subnet=ip_subnet,
@@ -556,7 +568,7 @@ class ClientInventoryMixin(ClientLifecycleMixin):
         dom_key = normalize_domain_key(domain)
         if sid is None and get_write_session(mgmt_name=mgmt_name, domain_name=dom_key) is None:
             async with self.write_session(mgmt_name, domain) as ws:
-                return await self.api_call(
+                res = await self.api_call(
                     mgmt_name,
                     f"{verb}-{clean_type}",
                     payload,
@@ -564,6 +576,18 @@ class ClientInventoryMixin(ClientLifecycleMixin):
                     sid=ws.sid,
                     server_ip=server_ip or ws.server_ip,
                 )
+                if not res.success and not ws.discarded and not ws.published:
+                    await self.api_call(
+                        mgmt_name,
+                        "discard",
+                        {},
+                        domain=domain,
+                        sid=ws.sid,
+                        server_ip=ws.server_ip,
+                    )
+                    ws.discarded = True
+                    ws.overlay.clear()
+                return res
         return await self.api_call(
             mgmt_name,
             f"{verb}-{clean_type}",

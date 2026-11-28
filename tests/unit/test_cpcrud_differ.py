@@ -524,3 +524,56 @@ def test_groups_diff_and_blank_rule_item_safety() -> None:
 
     r_diffs, _ = compute_rule_diff({"install-on": ["Policy Targets"]}, rule, rulebase_type="access")
     assert "install-on" in r_diffs
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-1")
+def test_differ_preserves_zero_protocol_and_dereferences_access_inline_layer() -> None:
+    """DA-045 & DA-047: Differentiate service-other ip_protocol=0 cleanly and dereference AccessRuleEntry inline-layer UID/dict."""
+    from arodonata.core.models.rulebase import AccessRuleEntry
+    from arodonata.core.models.services import CPService
+    from arodonata.cpcrud.differ import compute_rule_diff, compute_service_diff
+
+    svc = CPService.from_cp_dict(
+        "mds1",
+        "Corp",
+        {"uid": "s-hop", "name": "hopopt", "type": "service-other", "ip-protocol": 0},
+    )
+    assert svc.protocol == "0"
+    diffs_same, _ = compute_service_diff({"type": "service-other", "name": "hopopt", "ip_protocol": 0}, svc)
+    assert diffs_same == {}
+
+    diffs_zero, payload_zero = compute_service_diff(
+        {"type": "service-other", "name": "hopopt-update", "ip_protocol": 0},
+        CPService(
+            mgmt_name="mds1", domain_name="Corp", uid="s2", name="hopopt-update", type="service-other", protocol="6"
+        ),
+    )
+    assert "protocol" in diffs_zero
+    assert payload_zero["ip-protocol"] == 0
+
+    rule_uid_inline = AccessRuleEntry(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layer_uid="l-1",
+        layer_name="Network",
+        uid="r-inline",
+        name="Inline rule",
+        inline_layer_uid="il-uid-1",
+        raw_data={"inline-layer": {"uid": "il-uid-1", "name": "SubPolicy"}},
+    )
+    diffs_inline, _ = compute_rule_diff(
+        {"type": "access-rule", "name": "Inline rule", "inline_layer": "SubPolicy"},
+        rule_uid_inline,
+        rulebase_type="access",
+        obj_dict={"il-uid-1": {"uid": "il-uid-1", "name": "SubPolicy"}},
+    )
+    assert diffs_inline == {}
+
+    diffs_clear, payload_clear = compute_rule_diff(
+        {"type": "access-rule", "name": "Inline rule", "inline_layer": ""},
+        rule_uid_inline,
+        rulebase_type="access",
+        obj_dict={"il-uid-1": {"uid": "il-uid-1", "name": "SubPolicy"}},
+    )
+    assert "inline-layer" in diffs_clear
+    assert payload_clear["inline-layer"] == ""

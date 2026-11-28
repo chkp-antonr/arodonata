@@ -1,14 +1,14 @@
 # Arodonata v2 — Full API Reference
 
-Complete, auto-generated reference of every public class, SQLModel table, function, and method in the `arodonata` v2.0.0 package, extracted directly from `src/arodonata` via AST.
+Complete, auto-generated reference of every public class, SQLModel table, function, and method in the `arodonata` v2.6.7 package, extracted directly from `src/arodonata` via AST.
 
 ## Package Map
 
 - **Top-Level Package & ArodonataClient Facade (`arodonata`, `arodonata.client`)** — 1 module(s)
 - **core — Configuration, Contexts, Models, Hexagonal Ports, Sync & Search Services** — 54 module(s)
-- **adapters — Check Point Transport (`AMgmtClient`), SQL Storage (15 Tables) & SSE** — 29 module(s)
+- **adapters — Check Point Transport (`AMgmtClient`), SQL Storage & SSE** — 29 module(s)
 - **rulebase — Cached Rulebase Source, SmartConsole Numbering & Local Filtering** — 8 module(s)
-- **cpcrud — Declarative Policy-as-Code Engine (Validator, Planner, Executor, Inverse)** — 22 module(s)
+- **cpcrud — Declarative Policy-as-Code Engine (Validator, Planner, Executor, Inverse)** — 23 module(s)
 - **reports — Auditable Session Change Report Collector & Multi-Format Renderer** — 12 module(s)
 - **mcp — Streamable-HTTP Model Context Protocol Server & Consolidated Tools** — 18 module(s)
 - **api_reference** — 4 module(s)
@@ -190,6 +190,8 @@ concurrent_limit: int = Field(default=4, ge=1, le=20, validation_alias=AliasChoi
 domain_sync_concurrency: int = Field(default=0, ge=0, le=20, validation_alias=AliasChoices('ARODONATA_DOMAIN_SYNC_CONCURRENCY'))
 route_collect_concurrency: int = Field(default=0, ge=0, le=32, validation_alias=AliasChoices('ARODONATA_ROUTE_COLLECT_CONCURRENCY'))
 max_routes_per_gateway: int = Field(default=50000, ge=100, le=500000, validation_alias=AliasChoices('ARODONATA_MAX_ROUTES_PER_GATEWAY'))
+max_query_pages: int = Field(default=5000, ge=1, le=100000, validation_alias=AliasChoices('ARODONATA_MAX_QUERY_PAGES'))
+max_query_objects: int = Field(default=1000000, ge=1, le=10000000, validation_alias=AliasChoices('ARODONATA_MAX_QUERY_OBJECTS'))
 login_throttle_window: float = Field(default=70.0, gt=0, validation_alias=AliasChoices('ARODONATA_LOGIN_THROTTLE_WINDOW'))
 login_max_wait: float = Field(default=900.0, gt=0, validation_alias=AliasChoices('ARODONATA_LOGIN_MAX_WAIT'))
 cache_ttl: int = Field(default=300, ge=0, validation_alias=AliasChoices('ARODONATA_CACHE_TTL'))
@@ -235,14 +237,6 @@ Apply `trace_modules` rules if non-empty; preserve host rules when empty.
 
 Compute socket read timeout for an API call (`budget + 5` or `max(api, login) + 5`).
 
-###### `def model_dump(self, **kwargs: Any) -> dict[str, Any]`
-
-Serialize settings with secrets and database URL passwords masked.
-
-###### `def model_dump_json(self, **kwargs: Any) -> str`
-
-Serialize settings to JSON with secrets and database URL passwords masked.
-
 ### `arodonata/core/context.py`
 
 Contextvars propagation for authentication, operator metadata, and WriteSession overlays.
@@ -285,6 +279,10 @@ Return the active `WriteSession` if one is bound and matches `(mgmt_name, domain
 @contextmanager
 ```
 Bind a `WriteSession` to the current `contextvars` scope.
+
+##### `async def shielded_best_effort(awaitable: Awaitable[Any]) -> None`
+
+Await a cleanup coroutine under `asyncio.shield`, propagating cancellation and TLS identity failures.
 
 ##### `async def run_write_session_lifecycle(ws: WriteSession, *, api_call_fn: Callable[..., Awaitable[ApiCallResult]], logout_fn: Callable[..., Awaitable[Any]], domain: str | None = None, publish_on_exit: bool = True, on_domain_invalidated: Callable[[str, str | None], None] | None = None) -> AsyncIterator[WriteSession]`
 
@@ -485,6 +483,10 @@ Return True if a Check Point API code or message indicates script or read-only p
 
 Return True if a Check Point API error indicates Script Repository commands are unsupported (< v1.9).
 
+##### `def is_not_found_error(status_code: int, error_code: str | None, error_message: str | None) -> bool`
+
+Return `True` if a Check Point API response specifically indicates 'object not found'.
+
 #### class `ArodonataError(Exception)`
 
 Base exception for all Arodonata errors with automatic SID/secret redaction.
@@ -646,6 +648,16 @@ _No docstring._
 #### class `RepositoryScriptPermissionError(RepositoryScriptError)`
 
 Raised when Check Point denies permission to inspect, manage, or run a repository script.
+
+##### Methods
+
+###### `def __init__(self, mgmt_name: str, domain_name: str, script_ref: str, operation: str = 'execute', message: str | None = None, *, known_sids: Iterable[str] | None = None) -> None`
+
+_No docstring._
+
+#### class `RepositoryScriptUnsupportedError(RepositoryScriptError)`
+
+Raised when the Check Point Management API does not support Script Repository commands (< R81.20 / v1.9).
 
 ##### Methods
 
@@ -854,6 +866,7 @@ phase: CPCRUDPhase = 'completed'
 succeeded_count: int = 0
 failed_count: int = 0
 skipped_count: int = 0
+report: Any = Field(default=None, exclude=True, repr=False)
 ```
 ### `arodonata/core/models/__init__.py`
 
@@ -863,7 +876,21 @@ _No public classes or functions in this module._
 
 ### `arodonata/core/models/assets.py`
 
-Gateway, cluster, VSX, and management server asset models (`Asset`).
+Gateway, cluster, VSX, and management server asset models (`Asset`) and vendor-neutral classification.
+
+#### Module-Level Functions
+
+##### `def classify_asset_role(asset: Asset | Mapping[str, Any], *, parent_type: str | None = None) -> AssetRole`
+
+Classify an `Asset` or raw Check Point payload into a normalized `AssetRole`.
+
+##### `def classify_asset_platform(asset: Asset | Mapping[str, Any]) -> AssetPlatform`
+
+Classify an `Asset` or raw Check Point payload into a normalized `AssetPlatform` from vendor fields only.
+
+##### `def classify_asset(asset: Asset, *, parent_type: str | None = None) -> Asset`
+
+Recompute vendor-neutral role, platform, and target flags on an `Asset`, returning an updated copy if needed.
 
 #### class `Asset(BaseModel)`
 
@@ -895,6 +922,11 @@ virtual_system_uids: list[str] = Field(default_factory=list)
 virtual_system_asset_ids: list[str] = Field(default_factory=list)
 interfaces: list[dict[str, Any]] = Field(default_factory=list)
 network_security_blades: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('network_security_blades', 'network-security-blades'))
+management_blades: dict[str, Any] = Field(default_factory=dict, validation_alias=AliasChoices('management_blades', 'management-blades'))
+asset_role: AssetRole = 'unknown'
+platform_family: AssetPlatform = 'unknown'
+is_policy_target: bool = False
+is_execution_target: bool = False
 comments: str = ''
 color: str | None = None
 raw_data: dict[str, Any] = Field(default_factory=dict)
@@ -943,6 +975,13 @@ Expand asset types/aliases into deduplicated REST and Check Point `Cpmi*` classe
 
 Normalize an object, service, or asset type alias across all scopes.
 
+##### `def partition_entity_types(types: Sequence[str] | None, *, expand_gateway_family: bool = False, group_as_service: bool = False) -> PartitionedEntityTypes`
+
+Partition raw `types` filters into deduplicated `(object_types, service_types, asset_types, is_explicit_empty)`.
+
+When `types` is `None`, returns empty lists and `is_explicit_empty=False`.
+When `types` is non-`None` but contains no non-blank entries, returns `is_explicit_empty=True`.
+
 ##### `def utc_now() -> datetime`
 
 Return current naive UTC datetime (tzinfo=None).
@@ -972,6 +1011,18 @@ naive datetimes are assumed to already be in UTC and returned as-is.
 
 Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a naive UTC `datetime`.
 
+#### class `PartitionedEntityTypes(NamedTuple)`
+
+Result of partitioning raw entity type filters into object, service, and asset scopes.
+
+##### Fields / Class Variables
+
+```python
+object_types: list[str]
+service_types: list[str]
+asset_types: list[str]
+is_explicit_empty: bool
+```
 #### class `ApiCallResult(BaseModel)`
 
 Typed result of a single Check Point Management API call.
@@ -1055,6 +1106,7 @@ mgmt_name: str
 domain_name: str
 sid: str = Field(repr=False, exclude=True)
 server_ip: str
+tls_identity_host: str | None = None
 session_uid: str | None = None
 auth_identity: str | None = None
 created_at: datetime = Field(default_factory=utc_now)
@@ -1575,6 +1627,12 @@ matches_expected: bool | None = None
 error_code: str | None = None
 error: str | None = None
 ```
+##### Methods
+
+###### `def model_post_init(self, __context: Any) -> None`
+
+_No docstring._
+
 #### class `EnsureRepositoryScriptResult(BaseModel)`
 
 Result of idempotently ensuring a repository script matches the desired body.
@@ -2438,6 +2496,14 @@ Return `(min_ip_int, max_ip_int)` for a `host`, `network`, or `address-range` `C
 
 Parse a CIDR (`10.0.0.0/24`), single IPv4 (`10.0.0.1`), or range (`10.0.0.1-10.0.0.10`) into `(lo, hi, prefix_len)`.
 
+##### `def escape_markdown_cell(val: Any) -> str`
+
+Escape HTML tags, newlines, backslashes, pipes, and Markdown link/code delimiters in table cells.
+
+##### `def escape_markdown_code(val: Any) -> str`
+
+Neutralize newlines, backticks, and GFM table pipes inside inline Markdown code spans without mangling paths.
+
 ### `arodonata/core/services/__init__.py`
 
 Core domain services for Arodonata v2 (`DomainService`, `DomainSyncCoordinator`,
@@ -2600,7 +2666,7 @@ Stream `SyncProgressEvent` items while refreshing gateway/cluster/VSX assets acr
 ```
 Refresh gateway/cluster/VSX assets across domains and return `RefreshOutcome`.
 
-###### `async def get_assets(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]`
+###### `async def get_assets(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]`
 
 ```python
 @traced
@@ -2635,9 +2701,19 @@ _No docstring._
 ```
 Configured domain list TTL in seconds (default 3600s / 1 hour).
 
-###### `def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None) -> datetime`
+###### `def invalidation_seq(self) -> int`
+
+```python
+@property
+```
+Current monotonic invalidation sequence counter.
+
+###### `def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None, *, target_seq: int | None = None) -> datetime`
 
 Record that `mgmt_name`'s domain list was refreshed at `refreshed_at`.
+
+When `target_seq` is provided and an invalidation occurred after `target_seq`
+(either globally or for `mgmt_name`), the mid-flight invalidation is preserved.
 
 ###### `def invalidate(self, mgmt_name: str | None = None) -> None`
 
@@ -2860,7 +2936,7 @@ Structured cross-domain object/service/asset filtering, aggregation, and cache-s
 
 #### Module-Level Functions
 
-##### `def resolve_query_scopes(types: Sequence[str] | None, *, port: str | None = None, protocol: str | None = None, parent_id: str | None = None, parent_asset_id: str | None = None) -> tuple[list[str] | None, bool, bool, bool]`
+##### `def resolve_query_scopes(types: Sequence[str] | None, *, port: str | None = None, protocol: str | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, is_policy_target: bool | None = None, is_execution_target: bool | None = None, group_by_attrs: Sequence[str] | None = None) -> tuple[list[str] | None, bool, bool, bool]`
 
 Normalize `types` filters and compute `(requested_types, want_objects, want_services, want_assets)`.
 
@@ -2868,7 +2944,7 @@ Normalize `types` filters and compute `(requested_types, want_objects, want_serv
 
 Return progressive-disclosure schema and summary counts for cached objects, services, and assets.
 
-##### `async def query_objects_impl(svc: Any, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
+##### `async def query_objects_impl(svc: Any, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, is_policy_target: bool | None = None, is_execution_target: bool | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
 
 Execute structured cross-domain filtering, grouping, counting, or schema description.
 
@@ -2947,7 +3023,7 @@ Find a single `CPObject`, `CPService`, or `Asset` by exact `uid`, `name`, or com
 ```
 Return progressive-disclosure schema and summary counts for cached objects, services, and assets.
 
-###### `async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
+###### `async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, is_policy_target: bool | None = None, is_execution_target: bool | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
 
 ```python
 @traced(module=_SEARCH_TRACE_MODULE)
@@ -2978,6 +3054,10 @@ Return `True` if `obj` matches `term`.
 ##### `def resolve_group_memberships(matches: Sequence[CPObject], all_objects: Sequence[CPObject], *, max_depth: int) -> dict[str, list[GroupMembershipNode]]`
 
 Build reverse member-to-group index per `(mgmt_name, domain_name)` and traverse BFS up to `max_depth`.
+
+##### `def asset_matches_classified_term(asset: Asset, term: ClassifiedSearchTerm, *, exact_match: bool = False) -> bool`
+
+Return `True` if `asset`'s primary attributes or interface IPv4 addresses match `term`.
 
 ##### `async def search_objects_impl(svc: Any, query: str, *, classified_terms: list[ClassifiedSearchTerm], mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, types: Sequence[str] | None = None, include_global: bool = False, max_depth: int = 2, exact_match: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> SearchResult`
 
@@ -3094,7 +3174,7 @@ Result of probing a single `(mgmt_name, domain_name)` for staleness across `item
 
 ##### Methods
 
-###### `def __init__(self, *, mgmt_name: str, domain: DomainInfo, stale_types: list[str], fresh_types: list[str], existing_states: dict[str, DomainSyncState], remote_published_at: datetime | None = None, remote_session_uid: str | None = None, probe_error: Exception | None = None, probe_started_at: datetime | None = None, invalidation_seq_at_start: int = 0, invalidation_at_start: tuple[datetime | None, int] = (None, 0)) -> None`
+###### `def __init__(self, *, mgmt_name: str, domain: DomainInfo, stale_types: list[str], fresh_types: list[str], existing_states: dict[str, DomainSyncState], remote_published_at: datetime | None = None, remote_session_uid: str | None = None, probe_error: Exception | None = None, probe_started_at: datetime | None = None, invalidation_seq_at_start: int = 0, invalidation_at_start: tuple[datetime | None, int] = (None, 0), verified_remote: bool = False) -> None`
 
 _No docstring._
 
@@ -3323,11 +3403,11 @@ Extract and Base64-decode `responseMessage` / `responseError` from Check Point `
 
 ##### `def parse_ip_route_show(output: str) -> list[ParsedCliRoute]`
 
-Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items.
+Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items (including multi-line ECMP).
 
 ##### `def parse_clish_show_route(output: str) -> list[ParsedCliRoute]`
 
-Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items.
+Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items (including ECMP continuations).
 
 ##### `def parse_combined_cli_routes_with_status(stdout: str, *, max_routes: int | None = None) -> tuple[list[ParsedCliRoute], bool]`
 
@@ -3640,7 +3720,7 @@ Wrap a function in `@arlogi.otel.traced` while scrubbing chained `__cause__`/`__
 
 ---
 
-## adapters — Check Point Transport (`AMgmtClient`), SQL Storage (15 Tables) & SSE
+## adapters — Check Point Transport (`AMgmtClient`), SQL Storage & SSE
 
 ### `arodonata/adapters/__init__.py`
 
@@ -4001,7 +4081,7 @@ via a single `±10` window re-read on duplicate UID, and restarting once on
 
 #### Module-Level Functions
 
-##### `async def paginate_objects(command: str, page_caller: PageCaller, *, details_level: str = 'standard', payload: dict[str, Any] | None = None, limit: int = DEFAULT_PAGE_LIMIT, collection_key: str | None = None) -> ApiQueryResult`
+##### `async def paginate_objects(command: str, page_caller: PageCaller, *, details_level: str = 'standard', payload: dict[str, Any] | None = None, limit: int = DEFAULT_PAGE_LIMIT, collection_key: str | None = None, max_pages: int = DEFAULT_MAX_QUERY_PAGES, max_objects: int = DEFAULT_MAX_QUERY_OBJECTS) -> ApiQueryResult`
 
 ```python
 @traced
@@ -4216,7 +4296,7 @@ response classifiers, and shared `logger`:
   `login_throttle_window` (`70s`) on Check Point login throttling (bounded by `login_max_wait`),
   and retries transient database revision/lock conditions (`Database revision is in progress`).
 - Re-resolves domain `active_ip` and `active_mds_ip` from the MDS system domain on failover.
-- Cleans up stale sessions via `SessionCleaner` and seeds the system domain SID on startup.
+- Cleans up stale sessions via `SessionCleaner`.
 
 #### class `LoginCoordinator`
 
@@ -4241,9 +4321,9 @@ Mapping of `(mgmt_name, sid) -> server_ip` for open dedicated write sessions.
 
 Attach `SessionCleaner` for max-sessions recovery.
 
-###### `def has_inflight_or_cached_login(self, mgmt_name: str, domain: str | None = None) -> bool`
+###### `def get_tls_identity_host(self, mgmt_name: str, sid: str) -> str | None`
 
-Return `True` if a login is currently in flight for `(mgmt_name, domain)`.
+Return remembered hostname-pin identity for `(mgmt_name, sid)` if any.
 
 ###### `def get_server_endpoint(self, mgmt_name: str) -> ServerEndpointConfig`
 
@@ -4275,10 +4355,6 @@ Return `True` if `entry` is still fresh.
 
 When `expires_at` is present it takes precedence (`now < expires_at`); otherwise the sliding window applies,
 i.e. the age since `last_used_at` (falling back to `created_at`) is below `session_expire_seconds`.
-
-###### `def adopt_dedicated_sid(self, mgmt_name: str, sid: str) -> None`
-
-Release `sid` from dedicated-session logout tracking after seeding it into `sid_cache`.
 
 ###### `async def get_readonly_session(self, mgmt_name: str, domain: str | None = None, *, server_ip: str | None = None, force_new: bool = False) -> tuple[str, str]`
 
@@ -4535,6 +4611,14 @@ Return `True` if `fingerprint` is already trusted for any address in the store.
 ###### `def record(self, host: str, port: int, fingerprint: str, *, source: str = 'tofu', persist: bool = True) -> KnownHostEntry`
 
 Record a trusted fingerprint for `(host, port)` and atomically persist with mode `0600`.
+
+###### `def record_many(self, targets: Sequence[tuple[str, int]], fingerprint: str, *, source: str = 'tofu', persist: bool = True) -> dict[str, KnownHostEntry]`
+
+Record a trusted fingerprint for multiple `(host, port)` targets atomically.
+
+Checks all target keys against on-disk entries inside a single `flock` critical section
+before writing or replacing `tls_known_hosts.json` so a conflict on any target never
+persists a partial write for sibling targets.
 
 #### class `TrustPolicy`
 
@@ -4940,6 +5024,17 @@ Atomically replace all cached assets for `(mgmt_name, domain_name)`.
 ```
 Insert or update `Asset` rows in `arodonata_assets`.
 
+###### `async def update_assets_vsx_links(self, patches: Sequence[tuple[str, datetime, Mapping[str, Any]]]) -> int`
+
+```python
+@traced
+```
+Conditionally update VSX-linking columns on existing `arodonata_assets` rows.
+
+Each patch is `(row_id, expected_updated_at, column_values)`. Only existing rows whose
+`updated_at` matches `expected_updated_at` are updated, preventing concurrent per-domain
+asset refreshes from being clobbered or deleted assets from being resurrected.
+
 ### `arodonata/adapters/storage/cache/mappers.py`
 
 Record <-> domain model and row-dict converters for control, inventory, and topology tables.
@@ -5244,6 +5339,7 @@ mgmt_name: str = Field(index=True)
 domain_name: str = Field(index=True)
 sid: str = Field(repr=False)
 server_ip: str
+tls_identity_host: str | None = Field(default=None)
 session_uid: str | None = Field(default=None)
 auth_identity: str | None = Field(default=None)
 created_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=False), nullable=False))
@@ -5359,6 +5455,11 @@ virtual_system_uids: list[str] = Field(default_factory=list, sa_column=Column(JS
 virtual_system_asset_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 interfaces: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
 network_security_blades: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+management_blades: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+asset_role: str | None = Field(default=None, index=True)
+platform_family: str | None = Field(default=None, index=True)
+is_policy_target: bool | None = Field(default=None, index=True)
+is_execution_target: bool | None = Field(default=None, index=True)
 comments: str = Field(default='')
 color: str | None = Field(default=None)
 raw_data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
@@ -5986,12 +6087,13 @@ Convert a raw Check Point HTTPS rule dict into `HttpsRuleEntry`.
 
 Convert a raw Check Point Threat Prevention rule dict into `ThreatRuleEntry`.
 
-##### `async def fetch_paged_rulebase(api: ApiPort, mgmt_name: str, domain_name: str | None, *, rulebase_type: RulebaseType, layer_uid: str = '', layer_name: str = '', package_uid: str | None = None, package_name: str | None = None, details_level: str = 'standard', use_object_dictionary: bool = True, limit: int = MAX_RULEBASE_PAGE_LIMIT, extra_payload: dict[str, Any] | None = None, sid: str | None = None, server_ip: str | None = None) -> PagedRulebaseResult`
+##### `async def fetch_paged_rulebase(api: ApiPort, mgmt_name: str, domain_name: str | None, *, rulebase_type: RulebaseType, layer_uid: str = '', layer_name: str = '', package_uid: str | None = None, package_name: str | None = None, details_level: str = 'standard', use_object_dictionary: bool = True, limit: int = MAX_RULEBASE_PAGE_LIMIT, extra_payload: dict[str, Any] | None = None, sid: str | None = None, server_ip: str | None = None, max_pages: int = MAX_RULEBASE_PAGES, max_objects: int = MAX_RULEBASE_OBJECTS) -> PagedRulebaseResult`
 
-```python
-@traced
-```
 Page `show-*-rulebase` in chunks of up to 100 rules, stitching split sections and preserving empty trailing sections.
+
+##### `async def list_collection_with_fallback(api: ApiPort, mgmt_name: str, domain_name: str, command: str, *, data_keys: tuple[str, ...], sid: str | None = None, server_ip: str | None = None, strict: bool = True) -> list[dict[str, Any]]`
+
+Query a paginated list command via `api_query`, falling back to `api_call` only if unsupported.
 
 #### class `PagedRulebaseResult(BaseModel)`
 
@@ -6229,20 +6331,26 @@ Shared constants, overlay helpers, and base state reader (`arodonata.cpcrud._sta
 
 #### Module-Level Functions
 
-##### `def normalize_app_site_url_key(url: str, *, is_regex: bool) -> str`
-
-Return canonical comparison key for an `application-site` URL entry (case-folded when `is_regex=False`).
-
-##### `def is_not_found_error(status_code: int, error_code: str | None, error_message: str | None) -> bool`
-
-Return `True` if a Check Point API response specifically indicates 'object not found'.
-
 ##### `def normalize_mask_length(mask_length: int | float | str | None, subnet_mask: str | None = None, *, strict: bool = False) -> int | None`
 
 Normalize a mask length or dotted-quad subnet mask into an integer prefix length (0..32).
 
 When `strict=True`, explicitly supplied invalid `mask_length` or `subnet_mask` values raise
 `ValidationError` instead of silently returning `None`.
+
+### `arodonata/cpcrud/_state_reader_constants.py`
+
+Constant tables and normalization helpers shared across CPCRUD state readers.
+
+#### Module-Level Functions
+
+##### `def normalize_app_site_url_key(url: str, *, is_regex: bool) -> str`
+
+Return canonical comparison key for an `application-site` URL entry (case-folded when `is_regex=False`).
+
+##### `def match_deleted_entity_overlay(*, uid: str | None, name: str | None, entity_type: str | None, virt_objects: Mapping[str, Any], virt_services: Mapping[str, Any], del_objects: set[str], del_services: set[str], rule_buckets: Sequence[tuple[set[str], Mapping[str, Any]]]) -> bool`
+
+Return `True` when `(uid, name, entity_type)` resolves as virtually deleted in overlay state.
 
 #### class `StateLookupError(ArodonataError)`
 
@@ -6341,11 +6449,11 @@ Execute `plan` in a dedicated `WriteSession` per domain and yield `CPCRUDEvent` 
 ```
 Execute `plan` and return the final `ApplyReport`.
 
-###### `async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> AsyncIterator[CPCRUDEvent]`
+###### `async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> AsyncIterator[CPCRUDEvent]`
 
 Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache.
 
-###### `async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> ApiCallResult`
+###### `async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> ApiCallResult`
 
 ```python
 @traced
@@ -6608,6 +6716,7 @@ session_name: str | None = None
 baseline_readable: bool = False
 baseline_session_uid: str | None = None
 baseline_published_at: datetime | None = None
+owner_key: str = Field(default='', exclude=True, repr=False)
 _sid: str = PrivateAttr(default='')
 ```
 ##### Methods
@@ -6771,6 +6880,14 @@ Handles:
 
 Return `True` if `spec` contains an incremental `{add, remove}` mapping on any rule list cell.
 
+##### `def extract_raw_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str`
+
+Extract raw CPCRUD verb from `operation`/`state` (or `action` when not a rule verdict).
+
+##### `def normalize_operation_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str`
+
+Resolve canonical planner verb (`present`, `set`, or `delete`) from an operation spec.
+
 ##### `def build_effective_obj_dict(raw_data: Mapping[str, Any] | None, obj_dict: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Mapping[str, Any]]`
 
 Merge `_resolved_objects` from `raw_data` with `obj_dict` into a unified lookup dictionary.
@@ -6895,14 +7012,14 @@ Execute `plan` in an isolated `WriteSession` per domain and stream `CPCRUDEvent`
 ```
 Build a schema-valid compensating rollback template from `plan` (and optional `report`).
 
-###### `async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> ApiCallResult`
+###### `async def publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> ApiCallResult`
 
 ```python
 @traced
 ```
 Adopt `session_uid`, publish it, log out, and invalidate the domain cache.
 
-###### `async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False) -> AsyncIterator[CPCRUDEvent]`
+###### `async def stream_publish_staged_session(self, mgmt_name: str, domain: str | None = None, *, session_uid: str, sid: str | None = None, server_ip: str | None = None, timeout: float | None = None, auth: AuthContext | None = None, force_disconnect: bool = False, expected_session_name: str | None = None, allow_foreign: bool = False, allow_stale: bool = False, baseline_readable: bool | None = None, baseline_session_uid: str | None = None, baseline_published_at: datetime | None = None) -> AsyncIterator[CPCRUDEvent]`
 
 Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate the domain cache.
 
@@ -7466,14 +7583,6 @@ Enforce unified fail-closed MCP security invariants across CLI, server, and ASGI
 
 Validate standalone CLI (`arodonata-mcp`) security policy and TLS trust store configuration.
 
-###### `def model_dump(self, **kwargs: Any) -> dict[str, Any]`
-
-Serialize MCP settings with `tokens` masked.
-
-###### `def model_dump_json(self, **kwargs: Any) -> str`
-
-Serialize MCP settings to JSON with `tokens` masked.
-
 ### `arodonata/mcp/errors.py`
 
 MCP tool error handling, domain pre-validation, `InvalidCredentialsError` mapping, and SID masking.
@@ -7778,7 +7887,11 @@ _No public classes or functions in this module._
 
 Shared serialization, cache freshness, pagination, filtering, and plan-signing helpers for MCP tools.
 
-_No public classes or functions in this module._
+#### Module-Level Functions
+
+##### `async def resolve_and_validate_scope(client: ArodonataClient, mgmt_name: str | None, *, domain: str | None = None, domains: Sequence[str] | None = None, cache_mode: CacheMode = 'smart') -> tuple[str | None, str | None, list[str] | None]`
+
+Resolve optional `mgmt_name`, normalize `domain`/`domains`, and pre-validate domains once.
 
 ### `arodonata/mcp/tools/_show_object.py`
 
@@ -8246,7 +8359,7 @@ Return discovered domains, excluding `Global` unless `include_global=True`.
 
 Never triggers implicit background object-cache warm-up.
 
-###### `async def get_gateways(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]`
+###### `async def get_gateways(self, mgmt_name: str | None = None, domain: str | None = None, *, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, include_global: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> list[Asset]`
 
 ```python
 @traced
@@ -8323,12 +8436,12 @@ Search cached objects across comma-separated terms and resolve parent groups up 
 ```
 Return progressive-disclosure schema and summary counts for cached objects and services.
 
-###### `async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
+###### `async def query_objects(self, *, mgmt_name: str | None = None, domain_name: str | None = None, domains: Sequence[str] | None = None, types: Sequence[str] | None = None, roles: Sequence[str] | None = None, platforms: Sequence[str] | None = None, is_policy_target: bool | None = None, is_execution_target: bool | None = None, scope_origin: Literal['all', 'local', 'global'] = 'all', name_pattern: str | None = None, ip_subnet: str | None = None, port: str | None = None, protocol: str | None = None, tags: Sequence[str] | None = None, parent_id: str | None = None, parent_asset_id: str | None = None, include_global: bool = False, group_by: Sequence[str] | None = None, aggregate: Literal['count', 'list', 'describe'] = 'list', limit: int = 100, offset: int = 0, cache_mode: CacheMode = 'cache', cache_ttl: float | None = None) -> dict[str, Any]`
 
 ```python
 @traced
 ```
-Execute structured cross-domain filtering, grouping, and counting over cached objects and services.
+Execute structured cross-domain filtering, grouping, and counting over cached objects, services, and assets.
 
 ###### `async def get_cache_status(self, *, mgmt_name: str | None = None, domain_name: str | None = None, scope: SyncScope | None = None) -> dict[str, Any]`
 
@@ -9553,9 +9666,9 @@ Reject mutations targeting UIDs locked by another open or disconnected session.
 
 Handle `show-global-assignments`, `show-global-assignment`, and `assign-global-*` commands.
 
-##### `def handle_verify_or_install_policy(mock: FileReplayApiMock, clean_cmd: str, req: Mapping[str, Any], *, dom_name: str, dom_files: Mapping[str, Any], global_files: Mapping[str, Any], wait_for_task: bool) -> ApiCallResult`
+##### `def handle_verify_or_install_policy(mock: FileReplayApiMock, clean_cmd: str, req: Mapping[str, Any], *, dom_name: str, dom_files: Mapping[str, Any], global_files: Mapping[str, Any], wait_for_task: bool, binding: SidBinding | None = None, active_ws: WorkSession | None = None) -> ApiCallResult`
 
-Handle `verify-policy` and `install-policy` async task synthesis.
+Handle `verify-policy` and `install-policy` session/domain guards and async task synthesis.
 
 ### `arodonata/testing/_replay_queries.py`
 
@@ -9926,6 +10039,20 @@ Path to the backing `enterprise_raw_dataset` fixture directory.
 @property
 ```
 Associated `FileReplayCliMock` instance.
+
+###### `def manage_repository_scripts(self) -> str`
+
+```python
+@property
+```
+Repository script RBAC mode (`'write'`, `'read'`, or `'none'`).
+
+###### `def manage_repository_scripts(self, value: str) -> None`
+
+```python
+@manage_repository_scripts.setter
+```
+_No docstring._
 
 ###### `def manifest(self) -> dict[str, Any]`
 

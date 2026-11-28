@@ -1,6 +1,15 @@
 """Pydantic v2 domain models for Arodonata."""
 
-from arodonata.core.models.assets import Asset
+from arodonata.core.models.assets import (
+    EXECUTION_TARGET_ROLES,
+    POLICY_TARGET_ROLES,
+    Asset,
+    AssetPlatform,
+    AssetRole,
+    classify_asset,
+    classify_asset_platform,
+    classify_asset_role,
+)
 from arodonata.core.models.common import (
     ASSET_TYPE_ALIASES,
     ASSET_TYPE_EQUIVALENTS,
@@ -133,6 +142,8 @@ __all__ = [
     "ApiCallResult",
     "ApiQueryResult",
     "Asset",
+    "AssetPlatform",
+    "AssetRole",
     "BUILTIN_SENTINELS",
     "CANONICAL_ASSET_TYPES",
     "CPObject",
@@ -143,6 +154,7 @@ __all__ = [
     "DEFAULT_OBJECT_TYPES",
     "DEFAULT_SERVICE_TYPES",
     "DROP_UID",
+    "EXECUTION_TARGET_ROLES",
     "DomainInfo",
     "DomainRulebaseSnapshot",
     "DomainSyncState",
@@ -169,6 +181,7 @@ __all__ = [
     "ORIGINAL_UID",
     "POLICY_TARGETS_TOKENS",
     "POLICY_TARGETS_UID",
+    "POLICY_TARGET_ROLES",
     "PolicyPackageInfo",
     "QUERY_GROUP_BY_ALIASES",
     "REJECT_UID",
@@ -205,6 +218,9 @@ __all__ = [
     "TrafficFlowMatch",
     "WarmupStatusEntry",
     "WarmupTaskStatus",
+    "classify_asset",
+    "classify_asset_platform",
+    "classify_asset_role",
     "expand_asset_type",
     "expand_asset_types",
     "extract_policy_packages",

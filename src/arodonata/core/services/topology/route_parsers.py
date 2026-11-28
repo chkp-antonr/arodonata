@@ -68,6 +68,12 @@ _CLISH_ROUTE_RE = re.compile(
 )
 
 
+_CLISH_CONT_RE = re.compile(
+    r"^via\s+(?P<nh>\d+\.\d+\.\d+\.\d+),\s*(?P<via_if>[^,\s]+)",
+    re.IGNORECASE,
+)
+
+
 _VS_START_RE = re.compile(r"^===ARODONATA_VS_START\s+vsid=(?P<vsid>\d+)\s+name=(?P<name>.*?)===$")
 _VS_ERROR_RE = re.compile(r"^===ARODONATA_VS_ERROR\s+vsid=\d+\s+name=.*?\s+error=(?P<err>.*?)===$")
 
@@ -199,6 +205,12 @@ def extract_vs_slice_from_bundle(
         return GatewayCliResult(success=True, stdout=stdout, executor=executor)
 
     if VSX_BUNDLE_END_MARKER not in stdout:
+        if (
+            base_result is not None
+            and not base_result.success
+            and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
+        ):
+            return base_result
         return GatewayCliResult(
             success=False,
             stdout="",
@@ -232,6 +244,25 @@ def extract_vs_slice_from_bundle(
                     matched = s
                     break
 
+    if (
+        base_result is not None
+        and not base_result.success
+        and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
+    ):
+        err_code = (
+            base_result.error_code or (matched and matched.error and "vs_context_error") or "vsx_bundle_run_failed"
+        )
+        err_msg = base_result.error_message or (matched.error if matched else "") or "Underlying run-script task failed"
+        return GatewayCliResult(
+            success=False,
+            stdout=matched.raw_output if matched is not None else "",
+            stderr=base_result.stderr or (matched.error if matched else "") or "",
+            exit_code=base_result.exit_code or 1,
+            executor=executor,
+            error_code=err_code,
+            error_message=err_msg,
+        )
+
     if matched is None:
         avail = [f"{s.vsid}:{s.vs_name}" for s in slices]
         return GatewayCliResult(
@@ -244,23 +275,6 @@ def extract_vs_slice_from_bundle(
             error_message=(
                 f"Virtual System vsid={vsid} vs_name={vs_name!r} not found in VSX bundle (available: {avail})"
             ),
-        )
-
-    if (
-        base_result is not None
-        and not base_result.success
-        and base_result.error_code not in ("vs_context_error", "vs_not_found_in_bundle")
-    ):
-        err_code = base_result.error_code or (matched.error and "vs_context_error") or "vsx_bundle_run_failed"
-        err_msg = base_result.error_message or (matched.error if matched else "") or "Underlying run-script task failed"
-        return GatewayCliResult(
-            success=False,
-            stdout=matched.raw_output,
-            stderr=base_result.stderr or matched.error or "",
-            exit_code=base_result.exit_code or 1,
-            executor=executor,
-            error_code=err_code,
-            error_message=err_msg,
         )
 
     if matched.error:
@@ -337,12 +351,95 @@ def decode_cprid_task_output(data: dict[str, Any]) -> tuple[bool, str, str]:
     return not any_failed, stdout_str, stderr_str
 
 
+def _build_ip_cli_route(
+    dest_net: ipaddress.IPv4Network,
+    dev_name: str,
+    via_ip: ipaddress.IPv4Address | None,
+    proto_str: str,
+    scope_str: str,
+) -> ParsedCliRoute:
+    if proto_str in _IP_ROUTE_PROTO_MAP:
+        src_type = _IP_ROUTE_PROTO_MAP[proto_str]
+    elif scope_str == "link" or (via_ip is None and dest_net.prefixlen > 0):
+        src_type = "connected_route"
+    else:
+        src_type = "gaia_static_route"
+    return ParsedCliRoute(
+        destination=dest_net,
+        interface_name=dev_name,
+        nexthop=via_ip,
+        source_type=src_type,
+        protocol_label=proto_str or ("connected" if src_type == "connected_route" else "static"),
+    )
+
+
+def _parse_ip_route_tokens(
+    tokens: list[str],
+    *,
+    start_idx: int,
+    dest_net: ipaddress.IPv4Network,
+    base_proto: str = "",
+    base_scope: str = "",
+) -> tuple[list[ParsedCliRoute], str, str]:
+    """Parse attributes and single/multi-`nexthop` legs from `ip -4 route show` tokens."""
+    proto_str = base_proto
+    scope_str = base_scope
+    leg_slices: list[list[str]] = []
+    cur_leg: list[str] = []
+    idx = start_idx
+    while idx < len(tokens):
+        tok = tokens[idx].lower()
+        if tok == "nexthop":
+            if cur_leg:
+                leg_slices.append(cur_leg)
+                cur_leg = []
+            idx += 1
+            continue
+        if tok == "proto" and idx + 1 < len(tokens):
+            proto_str = tokens[idx + 1].strip().lower()
+            idx += 2
+            continue
+        if tok == "scope" and idx + 1 < len(tokens):
+            scope_str = tokens[idx + 1].strip().lower()
+            idx += 2
+            continue
+        cur_leg.append(tokens[idx])
+        idx += 1
+    if cur_leg:
+        leg_slices.append(cur_leg)
+
+    parsed: list[ParsedCliRoute] = []
+    for leg in leg_slices:
+        dev_name: str | None = None
+        via_ip: ipaddress.IPv4Address | None = None
+        j = 0
+        while j < len(leg):
+            lt = leg[j].lower()
+            if lt == "dev" and j + 1 < len(leg):
+                dev_name = leg[j + 1].strip()
+                j += 2
+            elif lt == "via" and j + 1 < len(leg):
+                try:
+                    via_ip = ipaddress.IPv4Address(leg[j + 1].strip())
+                except ValueError:
+                    via_ip = None
+                j += 2
+            else:
+                j += 1
+        if dev_name and dev_name.lower() not in _SKIP_IF_NAMES:
+            parsed.append(_build_ip_cli_route(dest_net, dev_name, via_ip, proto_str, scope_str))
+    return parsed, proto_str, scope_str
+
+
 def parse_ip_route_show(output: str) -> list[ParsedCliRoute]:
-    """Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items."""
+    """Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items (including multi-line ECMP)."""
     routes: list[ParsedCliRoute] = []
+    active_ecmp: tuple[ipaddress.IPv4Network, str, str] | None = None
+
     for raw_line in output.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("===") or line.startswith("_vs_error=") or line.startswith("#"):
+            active_ecmp = None
             continue
 
         tokens = line.split()
@@ -350,6 +447,20 @@ def parse_ip_route_show(output: str) -> list[ParsedCliRoute]:
             continue
 
         first_tok = tokens[0].lower()
+        if first_tok == "nexthop":
+            if active_ecmp is not None:
+                dest_net, proto_str, scope_str = active_ecmp
+                legs, _, _ = _parse_ip_route_tokens(
+                    tokens,
+                    start_idx=1,
+                    dest_net=dest_net,
+                    base_proto=proto_str,
+                    base_scope=scope_str,
+                )
+                routes.extend(legs)
+            continue
+
+        active_ecmp = None
         if first_tok in _SKIP_ROUTE_KEYWORDS:
             continue
 
@@ -373,64 +484,49 @@ def parse_ip_route_show(output: str) -> list[ParsedCliRoute]:
         if dest_net.is_loopback or dest_net.is_multicast:
             continue
 
-        dev_name: str | None = None
-        via_ip: ipaddress.IPv4Address | None = None
-        proto_str = ""
-        scope_str = ""
-
-        idx = 1
-        while idx < len(tokens):
-            tok = tokens[idx].lower()
-            if tok == "dev" and idx + 1 < len(tokens):
-                dev_name = tokens[idx + 1].strip()
-                idx += 2
-            elif tok == "via" and idx + 1 < len(tokens):
-                try:
-                    via_ip = ipaddress.IPv4Address(tokens[idx + 1].strip())
-                except ValueError:
-                    via_ip = None
-                idx += 2
-            elif tok == "proto" and idx + 1 < len(tokens):
-                proto_str = tokens[idx + 1].strip().lower()
-                idx += 2
-            elif tok == "scope" and idx + 1 < len(tokens):
-                scope_str = tokens[idx + 1].strip().lower()
-                idx += 2
-            else:
-                idx += 1
-
-        if not dev_name or dev_name.lower() in _SKIP_IF_NAMES:
-            continue
-
-        if proto_str in _IP_ROUTE_PROTO_MAP:
-            src_type = _IP_ROUTE_PROTO_MAP[proto_str]
-        elif scope_str == "link" or (via_ip is None and dest_net.prefixlen > 0):
-            src_type = "connected_route"
+        legs, proto_str, scope_str = _parse_ip_route_tokens(tokens, start_idx=1, dest_net=dest_net)
+        if legs:
+            routes.extend(legs)
         else:
-            src_type = "gaia_static_route"
-
-        routes.append(
-            ParsedCliRoute(
-                destination=dest_net,
-                interface_name=dev_name,
-                nexthop=via_ip,
-                source_type=src_type,
-                protocol_label=proto_str or ("connected" if src_type == "connected_route" else "static"),
-            )
-        )
+            active_ecmp = (dest_net, proto_str, scope_str)
     return routes
 
 
 def parse_clish_show_route(output: str) -> list[ParsedCliRoute]:
-    """Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items."""
+    """Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items (including ECMP continuations)."""
     routes: list[ParsedCliRoute] = []
+    active_header: tuple[str, ipaddress.IPv4Network] | None = None
+
     for raw_line in output.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("===") or line.startswith("Codes:") or line.startswith("_vs_error="):
+            active_header = None
             continue
 
         m = _CLISH_ROUTE_RE.match(line)
         if not m:
+            if active_header is not None:
+                cont = _CLISH_CONT_RE.match(line)
+                if cont:
+                    code, dest_net = active_header
+                    via_if = (cont.group("via_if") or "").strip().rstrip(",")
+                    if via_if and via_if.lower() not in _SKIP_IF_NAMES:
+                        try:
+                            nh_ip: ipaddress.IPv4Address | None = ipaddress.IPv4Address(cont.group("nh"))
+                        except ValueError:
+                            nh_ip = None
+                        src_type = _CLISH_PROTOCOL_MAP.get(code, "clish_route")
+                        routes.append(
+                            ParsedCliRoute(
+                                destination=dest_net,
+                                interface_name=via_if,
+                                nexthop=nh_ip,
+                                source_type=src_type,
+                                protocol_label=f"clish:{code}",
+                            )
+                        )
+                    continue
+            active_header = None
             continue
 
         code = m.group("code").upper()
@@ -449,16 +545,19 @@ def parse_clish_show_route(output: str) -> list[ParsedCliRoute]:
                     else ipaddress.IPv4Network(f"{dest_raw}/32", strict=False)
                 )
             except ValueError:
+                active_header = None
                 continue
 
         if dest_net.is_loopback or dest_net.is_multicast:
+            active_header = None
             continue
 
+        active_header = (code, dest_net)
         if_name = (conn_if or via_if or "").strip().rstrip(",")
         if not if_name or if_name.lower() in _SKIP_IF_NAMES:
             continue
 
-        nh_ip: ipaddress.IPv4Address | None = None
+        nh_ip = None
         if nh_raw:
             try:
                 nh_ip = ipaddress.IPv4Address(nh_raw)
@@ -518,12 +617,10 @@ def parse_combined_cli_routes_with_status(
                 truncated = True
                 continue
             by_key[key] = cr
-        elif existing.source_type == "gaia_static_route" and cr.source_type in (
-            "bgp_route",
-            "ospf_route",
-            "clish_route",
-        ):
-            # Upgrade generic kernel/static route to specific dynamic protocol discovered by clish
+        elif (
+            existing.source_type == "gaia_static_route" and cr.source_type in ("bgp_route", "ospf_route", "clish_route")
+        ) or (existing.source_type == "clish_route" and cr.source_type in ("bgp_route", "ospf_route")):
+            # Upgrade generic kernel/routed route to specific dynamic protocol discovered by clish
             by_key[key] = cr
 
     return list(by_key.values()), truncated

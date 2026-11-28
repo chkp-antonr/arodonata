@@ -372,6 +372,48 @@ When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`,
 - **THEN** all exported symbols, `@traced` span names/qualnames, and hexagonal AST layer boundaries SHALL remain preserved
 - **AND** cluster, local VSX, and cross-domain VSX parent-child links and slot metadata SHALL reconcile consistently without duplicated link loops
 
+### Requirement: Vendor-Neutral Asset Role and Platform Classification
+
+**ID**: REQ-CACHE-019\
+**Intent**: Expose vendor-neutral Asset role, platform, and target flags.\
+**Non-goals**: Customer hostname rules or live SSH probing.
+
+`Asset` SHALL expose `management_blades`, `asset_role`, `platform_family`, `is_policy_target`, and `is_execution_target` from API metadata; asset enrichment SHALL inherit parent cluster fields and isolate VSX links; and asset/search/MCP queries SHALL normalize `"mds"`/`"CpmiMds"` and support role/platform filtering consistently.
+
+#### Scenario: SCN-CACHE-019-1 — Vendor-neutral role classification across gateways, clusters, VSX, management, and log servers
+
+- **GIVEN** raw Check Point asset payloads for standalone gateways (`simple-gateway`, `CpmiGatewayPlain`), clusters (`simple-cluster`, `CpmiGatewayCluster`), cluster members (`cluster-member`, `CpmiClusterMember`), VSX hosts/clusters/members/virtual systems, `mds`, `checkpoint-host` / `CpmiHostCkp` servers with `management-blades` or `network-security-blades`, and `interoperable-device`
+- **WHEN** `Asset.from_cp_dict()` or `classify_asset_role()` classifies each asset
+- **THEN** `asset_role` SHALL resolve deterministically across `"gateway"`, `"cluster"`, `"cluster_member"`, `"vsx_gateway"`, `"vsx_cluster"`, `"vsx_cluster_member"`, `"virtual_system"`, `"management_server"`, `"mds"`, `"log_server"`, `"interoperable_device"`, and `"unknown"`
+- **AND** `is_policy_target` SHALL match `is_policy_enforcing_gateway()` (`True` only for `"gateway"`, `"cluster"`, and `"virtual_system"`, preserving `CpmiHostCkp` with `firewall=True` as `"gateway"`), while `is_execution_target` SHALL be `True` only for OS-backed execution hosts (`"gateway"`, `"cluster_member"`, `"vsx_gateway"`, `"vsx_cluster_member"`, `"management_server"`, `"mds"`, `"log_server"`)
+
+#### Scenario: SCN-CACHE-019-2 — Vendor-neutral platform family classification across Gaia, Gaia Embedded, Maestro, CloudGuard, and Open Server
+
+- **GIVEN** Check Point asset payloads with vendor `os-name`, `hardware`, or `raw_data` platform metadata (and ignoring arbitrary `name`, `comments`, or `tags`)
+- **WHEN** `Asset.from_cp_dict()` or `classify_asset_platform()` classifies `platform_family`
+- **THEN** it SHALL classify `"gaia_embedded"` before generic `"gaia"`, `"maestro"` (`MHO`/`SMO`/`SGM`/`Orchestrator`/`Scalable Platform`), `"cloudguard"` (CloudGuard/AWS/Azure/GCP/VMSS), `"open_server"`, `"gaia"`, or `"unknown"` strictly from vendor attributes
+
+#### Scenario: SCN-CACHE-019-3 — Cluster member metadata inheritance and re-classification during ClusterRelationshipManager enrichment
+
+- **GIVEN** a parent cluster (`simple-cluster`, `CpmiGatewayCluster`, `vsx-cluster`, or `CpmiVsxClusterNetobj`) carrying `hardware`, `os_name`, and `version`, and linked child members missing one or more of those fields
+- **WHEN** `ClusterRelationshipManager.enrich()` enriches the assets
+- **THEN** each linked member SHALL inherit missing `hardware`, `os_name`, and `version` from its parent cluster without overwriting non-empty member values
+- **AND** `ClusterRelationshipManager` SHALL recompute member `asset_role` (promoting `"cluster_member"` under a VSX cluster parent to `"vsx_cluster_member"`), `platform_family`, `is_policy_target`, and `is_execution_target`
+
+#### Scenario: SCN-CACHE-019-4 — Cache persistence, in-place schema migration, and role/platform filtering and grouping
+
+- **GIVEN** an existing `arodonata_assets` cache table (including legacy rows with `NULL` classification columns) and newly synced assets
+- **WHEN** `DatabaseManager.initialize()` evolves the schema, `Asset` rows are round-tripped through `arodonata_assets`, and callers invoke `get_assets()`, `get_gateways()`, `query_objects()`, `describe_objects()`, MCP `list_assets()`, or MCP `query_objects()`
+- **THEN** missing classification columns SHALL migrate in place without wiping cached rows and legacy `NULL` rows SHALL auto-classify on hydration
+- **AND** `get_assets()`, `get_gateways()`, and MCP `list_assets()` SHALL support `roles` and `platforms` filtering, while `query_objects()` and `describe_objects()` SHALL support filtering (`roles`, `platforms`, `is_policy_target`, `is_execution_target`) and `group_by` across `asset_role`, `platform_family`, `is_policy_target`, and `is_execution_target` (including `"role"` and `"platform"` aliases)
+
+#### Scenario: SCN-CACHE-019-5 — Canonical MDS asset routing, VSX member/self-link isolation, and MCP query_objects asset-scope parity
+
+- **GIVEN** `"mds"` / `"CpmiMds"` assets, `vsx_cluster_member`/`vs_netobj` underscore aliases, VSX/cluster parent-child link candidates (parent lists, slot objects, pass-2 cluster links), and MCP `query_objects` calls grouping by `role`/`asset_role`/`platform`/`platform_family`/`is_policy_target`/`is_execution_target` with `types=None`
+- **WHEN** callers normalize aliases, query, look up, search, enrich VSX/cluster relationships, or invoke MCP `query_objects`
+- **THEN** every `ASSET_TYPE_EQUIVALENTS` alias (including `vsx_cluster_member` and `vs_netobj`) and `"mds"`/`"CpmiMds"` SHALL normalize and route cleanly to `scope="assets"`, and VSX/cluster enrichment SHALL exclude cluster members, VSX parents, Virtual Systems (from cluster members), and self-links across parent lists, slots, and cross-domain links
+- **AND** MCP `query_objects` SHALL pass normalized `group_by` and asset classification filters to scope resolution so live quota, cold-cache auto-upgrade, and `cache_age_seconds` evaluate against `scope="assets"`
+
 ### Requirement: Single-Flight Coalescing Freshness Integrity and Hardened SQLite Cache Permissions
 
 **ID**: REQ-CACHE-020\
@@ -391,3 +433,32 @@ When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`,
 - **GIVEN** a pre-existing SQLite cache path that is a symlink (including a dangling symlink) or an owner-owned regular file with `0644` permissions
 - **WHEN** `DatabaseManager.initialize()` opens the SQLite engine
 - **THEN** symlinks and non-regular files SHALL fail closed before SQLite opens them, and pre-existing regular files with group/other permission bits SHALL be tightened to `0o600`
+
+### Requirement: Hardened SQLite Paths, Race-Free VSX Reconciliation, and Unified Search Filtering
+
+**ID**: REQ-CACHE-021\
+**Intent**: Prevent SQLite permission bypasses, cross-domain VSX upsert races, stale cold-failure timestamps, discovery secret leaks, and search filter inconsistencies.\
+**Non-goals**: Changing SQLite/PostgreSQL schema table columns or `Asset` classification taxonomy (`REQ-CACHE-019`).
+
+Database initialization MUST validate regular-file/symlink safety and `0o600` permissions even on concurrent creation or injected SQLite engines. Cross-domain VSX reconciliation MUST update only VSX-linking columns on existing rows, cold failures MUST preserve `synced_at=None`, discovery logs and `ApiQueryResult.__repr__` MUST scrub secrets, and search MUST handle `ip_subnet` on `Asset` and `types=[]`.
+
+#### Scenario: SCN-CACHE-021-1 — SQLite hardening, cold failure synced_at, invalidation watermark, and discovery redaction
+
+- **GIVEN** concurrent SQLite file initialization or an injected file-backed SQLite engine, a failed cold domain sync, a mid-flight domain-list invalidation, or a failing `show-domains` response
+- **WHEN** `DatabaseManager` initializes, sync/discovery failures record state, or `DomainListRefreshTracker.mark_refreshed()` completes
+- **THEN** SQLite paths SHALL verify non-symlink regular files with `0o600` mode, cold failed slices SHALL retain `synced_at=None`, and mid-flight invalidations SHALL remain preserved
+- **AND** domain discovery warnings and `ApiQueryResult.__repr__` SHALL redact SIDs and secrets
+
+#### Scenario: SCN-CACHE-021-2 — Race-free partial VSX reconciliation and strict member exclusions
+
+- **GIVEN** concurrent per-domain `refresh_assets()` runs alongside cross-domain VSX reconciliation, or mixed cluster/VSX payloads containing Virtual Systems and VSX cluster members
+- **WHEN** `reconcile_cross_domain()` persists VSX links or `ClusterRelationshipManager.enrich()` links hierarchy relationships
+- **THEN** cross-domain reconciliation SHALL update only VSX-linking columns conditionally on existing rows without overwriting concurrent domain refreshes or resurrecting deleted assets
+- **AND** Virtual Systems SHALL be excluded from cluster member lists and VSX members excluded from VSX parent candidates per `SCN-CACHE-019-5`
+
+#### Scenario: SCN-CACHE-021-3 — Asset ip_subnet matching, empty types=[] short-circuit, and shared type partitioning
+
+- **GIVEN** cached `Asset` rows with primary or interface IPs queried with `ip_subnet`, or a `search_objects()` / `query_objects()` call with `types=[]`
+- **WHEN** `SearchService` partitions entity types and evaluates queries
+- **THEN** `query_objects(ip_subnet=...)` SHALL evaluate CIDR/range containment against `Asset` primary and interface IPv4 addresses
+- **AND** explicit `types=[]` SHALL return zero matches without refreshing or querying default types via one unified type-partitioning helper

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict, defaultdict
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
+from arodonata.core.context import AuthContext, UserContext, shielded_best_effort
 from arodonata.core.errors import ServerIdentityError, ValidationError, redact_sid
 from arodonata.core.events import CPCRUDActionEvent
 from arodonata.core.models.common import parse_cp_publish_timestamp, to_naive_utc
@@ -16,6 +18,7 @@ from arodonata.cpcrud.models import (
     DomainStamp,
     Outcome,
     PlannedAction,
+    StagedSessionInfo,
 )
 from arodonata.cpcrud.state_reader import OBJECT_ITEM_TYPES, SERVICE_ITEM_TYPES
 
@@ -33,6 +36,30 @@ ALLOWED_COMMAND_MAP: dict[tuple[str, Outcome], str] = {
     **{(t, Outcome.UPDATE): f"set-{t}" for t in OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | EXECUTABLE_RULE_TYPES},
     **{(t, Outcome.DELETE): f"delete-{t}" for t in OBJECT_ITEM_TYPES | SERVICE_ITEM_TYPES | EXECUTABLE_RULE_TYPES},
 }
+
+
+def _resolve_executor_owner_key(
+    resolved_auth: AuthContext | None,
+    resolved_user: UserContext | None,
+) -> str:
+    """Derive a non-colliding staged-session owner key from both `AuthContext` and `UserContext`."""
+    auth_key = resolved_auth.identity_key if resolved_auth is not None else ""
+    user_key = ""
+    if resolved_user is not None:
+        cid = (
+            resolved_user.client_id.strip()
+            if isinstance(resolved_user.client_id, str) and resolved_user.client_id.strip()
+            else ""
+        )
+        uid = (
+            resolved_user.user_id.strip()
+            if isinstance(resolved_user.user_id, str) and resolved_user.user_id.strip()
+            else ""
+        )
+        user_key = (cid if cid == uid else f"{cid}:{uid}") if cid and uid else cid or uid
+    if auth_key and user_key:
+        return f"{auth_key}|{user_key}"
+    return auth_key or user_key
 
 
 def resolve_allowlisted_command(action: PlannedAction) -> str:
@@ -218,3 +245,48 @@ def _fold_retry_report(cumulative: ApplyReport, retry_rep: ApplyReport) -> None:
             cumulative.stale_domains.append(s_dom)
     cumulative.published_sessions.update(retry_rep.published_sessions)
     cumulative.staged_sessions.extend(retry_rep.staged_sessions)
+
+
+def _select_staged_eviction_key(
+    staged_registry: OrderedDict[tuple[str, str, str], StagedSessionInfo],
+    owner_key: str,
+    *,
+    exclude_key: tuple[str, str, str] | None = None,
+) -> tuple[str, str, str] | None:
+    """Pick the LRU staged session to evict while protecting single-session peer callers (`DA-033`)."""
+    if owner_key:
+        for k, entry in staged_registry.items():
+            if k != exclude_key and entry.owner_key == owner_key:
+                return k
+    owner_counts: dict[str, int] = defaultdict(int)
+    for k, entry in staged_registry.items():
+        if k != exclude_key:
+            owner_counts[entry.owner_key] += 1
+    for k, entry in staged_registry.items():
+        if k != exclude_key and owner_counts.get(entry.owner_key, 0) > 1:
+            return k
+    return None
+
+
+async def _discard_and_logout_staged_info(api: ApiPort, info: StagedSessionInfo) -> None:
+    """Shielded discard, logout, and SID redaction cleanup for an evicted staged session."""
+    if not info.sid:
+        return
+    await shielded_best_effort(
+        api.api_call(
+            info.mgmt_name,
+            "discard",
+            {},
+            domain=info.domain_name or None,
+            sid=info.sid,
+            server_ip=info.server_ip or None,
+        )
+    )
+    await shielded_best_effort(
+        api.logout_sid(
+            info.mgmt_name,
+            info.sid,
+            server_ip=info.server_ip or None,
+        )
+    )
+    info.clear_sid()

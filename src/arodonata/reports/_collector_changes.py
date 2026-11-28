@@ -25,10 +25,62 @@ from arodonata.reports._collector_diffs import (
 from arodonata.reports.models import (
     ChangeOperation,
     ObjectChangeEntry,
+    OwnedSession,
     RangeScope,
+    ReportWarning,
     RuleChangeEntry,
     SessionChangeReport,
+    WarningCode,
 )
+
+
+class _OwnedSessionContext:
+    """Tracks `OwnedSession` eligibility and single-warning fallback to shared read-only state."""
+
+    def __init__(
+        self,
+        *,
+        owned: OwnedSession | None,
+        mgmt_name: str,
+        dom_name: str,
+        s_uid: str,
+        warnings: list[ReportWarning],
+    ) -> None:
+        self._mgmt_name = mgmt_name
+        self._dom_name = dom_name
+        self._s_uid = s_uid
+        self._warnings = warnings
+        self.known_sids: list[str] = [owned.sid] if owned is not None else []
+        self.owned: OwnedSession | None = owned
+        self.sid: str | None = owned.sid if owned is not None else None
+        self.server_ip: str | None = owned.server_ip if (owned is not None and owned.server_ip) else None
+
+        if owned is not None and owned.domain and dom_name and owned.domain.strip().lower() != dom_name.strip().lower():
+            self.disable(
+                code="owned_session_not_used",
+                message=(
+                    f"OwnedSession domain {owned.domain!r} does not match target domain {dom_name!r}; "
+                    "falling back to shared read-only session."
+                ),
+            )
+
+    @property
+    def active_owned(self) -> OwnedSession | None:
+        return self.owned if self.sid is not None else None
+
+    def disable(self, *, message: str, code: WarningCode = "owned_session_error") -> None:
+        self.owned = None
+        self.sid = None
+        self.server_ip = None
+        self._warnings.append(
+            ReportWarning(
+                code=code,
+                mgmt_name=self._mgmt_name,
+                domain=self._dom_name or None,
+                session_uid=self._s_uid,
+                message=message,
+            )
+        )
 
 
 def _extract_session_user_from_changes(

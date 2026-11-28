@@ -868,3 +868,82 @@ async def test_client_refresh_package_rulebase_none_domain_and_force_warmup_sepa
         assert t_smart_1 is t_smart_2
         assert t_force is not t_smart_1
         await asyncio.gather(t_smart_1, t_force)
+
+
+@pytest.mark.spec("SCN-CONFIG-009-2")
+async def test_paginate_objects_enforces_max_pages_and_max_objects() -> None:
+    """DA-031: paginate_objects() terminates cleanly with paging_limit_exceeded on excessive pages or objects."""
+    from arodonata.adapters.checkpoint.pager import paginate_objects
+
+    async def _two_page_caller(payload: dict[str, Any]) -> ApiCallResult:
+        offset = int(payload.get("offset", 0))
+        return ApiCallResult(
+            success=True,
+            data={
+                "objects": [{"uid": f"u-{offset + 1}", "name": f"o-{offset + 1}"}],
+                "from": offset + 1,
+                "to": offset + 1,
+                "total": 100,
+            },
+        )
+
+    res_pages = await paginate_objects("show-hosts", _two_page_caller, limit=1, max_pages=2)
+    assert res_pages.success is False
+    assert res_pages.code == "paging_limit_exceeded"
+
+    res_objs = await paginate_objects("show-hosts", _two_page_caller, limit=1, max_objects=1)
+    assert res_objs.success is False
+    assert res_objs.code == "paging_limit_exceeded"
+
+
+@pytest.mark.spec("SCN-CLIENT-020-1")
+async def test_standalone_mutate_object_discards_without_publish_on_api_failure() -> None:
+    """DA-012: Standalone add_object/set_object/delete_object discard instead of publishing when api_call fails."""
+    fake_api = FacadeFakeApi()
+    orig_api_call = fake_api.api_call
+    seen_cmds: list[str] = []
+
+    async def _recording_call(
+        mgmt_name: str,
+        command: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        domain: str | None = None,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        wait_for_task: bool = False,
+        timeout: float | None = None,
+    ) -> ApiCallResult:
+        seen_cmds.append(command)
+        if command in ("add-host", "set-host", "delete-host"):
+            return ApiCallResult(
+                success=False,
+                status_code=400,
+                error_code="generic_err_invalid_parameter",
+                error_message="Bad IP",
+            )
+        return await orig_api_call(
+            mgmt_name,
+            command,
+            payload,
+            domain=domain,
+            sid=sid,
+            server_ip=server_ip,
+            wait_for_task=wait_for_task,
+            timeout=timeout,
+        )
+
+    fake_api.api_call = _recording_call  # type: ignore[method-assign]
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        for fn in (
+            lambda: client.add_object("mds1", "host", {"name": "bad", "ip-address": "bad"}, domain="Corp"),
+            lambda: client.set_object("mds1", "host", {"name": "bad", "comments": "x"}, domain="Corp"),
+            lambda: client.delete_object("mds1", "host", name="bad", domain="Corp"),
+        ):
+            res = await fn()
+            assert res.success is False
+            assert res.error_message == "Bad IP"
+        assert "publish" not in seen_cmds
+        assert seen_cmds.count("discard") == 3

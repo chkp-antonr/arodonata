@@ -597,3 +597,48 @@ def test_trust_policy_binds_both_resolved_ip_and_identity_host(tmp_path: Path, m
     assert lab.verify_der("10.1.0.10", 443, der_a, identity_host="lab.example.com") == fp_a
     assert lab.trust_store.get("10.1.0.10", 443) is not None
     assert lab.trust_store.get("lab.example.com", 443) is not None
+
+
+@pytest.mark.spec("SCN-TRANS-008-1")
+def test_atomic_multi_key_tofu_and_symmetric_hostname_binding(tmp_path: Path) -> None:
+    """SCN-TRANS-008-1: Conflicting dual-key TOFU writes fail atomically; existing IP binds identity_host."""
+    der_legit, fp_legit = _make_der("legit-cert")
+    der_mitm, fp_mitm = _make_der("mitm-cert")
+
+    # 1. Atomic multi-key TOFU: Worker 1 pins (10.0.0.50, mgmt.example.com);
+    #    Worker 2 with stale memory tries (10.0.0.51, mgmt.example.com) with FP_MITM and must NOT persist 10.0.0.51.
+    known_hosts = tmp_path / "atomic_tofu.json"
+    worker1 = TrustPolicy(mode="tofu", known_hosts_path=known_hosts)
+    worker2 = TrustPolicy(mode="tofu", known_hosts_path=known_hosts)
+    # Prime worker2's cache before worker1 writes
+    assert worker2.trust_store.entries == {}
+
+    assert worker1.verify_der("10.0.0.50", 443, der_legit, identity_host="mgmt.example.com") == fp_legit
+    with pytest.raises(CertificateMismatchError):
+        worker2.trust_store.record_many(
+            [("10.0.0.51", 443), ("mgmt.example.com", 443)],
+            fp_mitm,
+            source="tofu",
+            persist=True,
+        )
+
+    fresh_store = TrustStore(path=known_hosts)
+    assert fresh_store.get("10.0.0.51", 443) is None
+    assert fresh_store.get("10.0.0.50", 443) is not None
+    assert fresh_store.get("mgmt.example.com", 443) is not None
+    assert not fresh_store.has_fingerprint_anywhere(fp_mitm)
+
+    # 2. Symmetric hostname binding: when (resolved_ip, port) already exists, connecting via identity_host binds it.
+    sym_hosts = tmp_path / "sym_tofu.json"
+    sym_policy = TrustPolicy(mode="tofu", known_hosts_path=sym_hosts)
+    assert sym_policy.verify_der("10.0.0.80", 443, der_legit) == fp_legit
+    assert sym_policy.trust_store.get("mds.example.com", 443) is None
+
+    assert sym_policy.verify_der("10.0.0.80", 443, der_legit, identity_host="mds.example.com") == fp_legit
+    bound_id = TrustStore(path=sym_hosts).get("mds.example.com", 443)
+    assert bound_id is not None
+    assert bound_id.fingerprint == fp_legit
+
+    # Subsequent IP change to 10.0.0.81 presenting rogue cert must fail closed due to bound hostname entry
+    with pytest.raises(CertificateMismatchError):
+        sym_policy.verify_der("10.0.0.81", 443, der_mitm, identity_host="mds.example.com")

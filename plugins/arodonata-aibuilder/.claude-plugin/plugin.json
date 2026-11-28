@@ -1,0 +1,20 @@
+{
+  "name": "arodonata-aibuilder",
+  "description": "Multi-agent skill, SDK quick-reference, Check Point quirk guides, and verified Python 3.13/uv templates for building Check Point automation scripts with Arodonata v2 and arlogi.",
+  "version": "2.6.7",
+  "author": {
+    "name": "Anton Razumov",
+    "url": "https://github.com/chkp-antonr"
+  },
+  "homepage": "https://github.com/chkp-antonr/arodonata/tree/master_v2/plugins/arodonata-aibuilder",
+  "repository": "https://github.com/chkp-antonr/arodonata",
+  "license": "MIT",
+  "keywords": [
+    "checkpoint",
+    "arodonata",
+    "mdsm",
+    "automation",
+    "arlogi",
+    "cpcrud"
+  ]
+}

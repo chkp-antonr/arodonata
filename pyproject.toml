@@ -108,6 +108,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/arodonata"]
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/plugins",
+    "/docs-notebooklm",
+    "/docs/_html",
+    "/openspec",
+    "/examples",
+]
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version_scheme = "pep440"
@@ -116,6 +125,8 @@ version_files = [
     "pyproject.toml:^version",
     "src/arodonata/__init__.py:__version__",
     "tests/unit/test_smoke.py:__version__",
+    "plugins/arodonata-aibuilder/plugin.json:^  \"version\":",
+    "plugins/arodonata-aibuilder/.claude-plugin/plugin.json:^  \"version\":",
 ]
 tag_format = "v$version"
 update_changelog_on_bump = true

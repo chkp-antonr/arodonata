@@ -28,7 +28,7 @@ from arodonata.core.services.topology._shared import (
     _RefreshTopologyFn,
     _ResolvedEndpointInterval,
 )
-from arodonata.core.services.topology.objects import _expand_cp_object
+from arodonata.core.services.topology.objects import _expand_cp_object, _lookup_indexed_object
 from arodonata.core.telemetry import span_attrs
 
 
@@ -124,8 +124,10 @@ def _build_effective_gateway_entries(
     filtered: list[GatewayTopologyEntry] = []
 
     for entry in gw_entries:
-        ann = ann_by_if_cidr.get((entry.interface_name, entry.cidr_or_range)) or ann_by_if_cidr.get(
-            ("*", entry.cidr_or_range)
+        ann = (
+            ann_by_if_cidr.get((entry.interface_name, entry.cidr_or_range))
+            or ann_by_if_cidr.get(("*", entry.cidr_or_range))
+            or ann_by_if_wildcard.get(entry.interface_name)
         )
         if ann is not None and ann.disposition == "ignore":
             continue
@@ -216,6 +218,7 @@ def _score_interface_group(
     if_trust_static: dict[str, bool] | None = None,
     internal_live_entries: Sequence[GatewayTopologyEntry] | None = None,
     internal_static_entries: Sequence[GatewayTopologyEntry] | None = None,
+    ann_by_if_wildcard: dict[str, TopologyAnnotation] | None = None,
 ) -> tuple[GatewayTopologyEntry, float, bool, list[ConfidenceDelta], list[str]]:
     """Compute the cumulative clamped `[0.0, 1.0]` confidence score and deltas for `matching_entries` on `if_name`."""
     eff_if_trust_map = if_trust_static or {}
@@ -247,6 +250,8 @@ def _score_interface_group(
                 if cand_ann is not None:
                     matched_ann = cand_ann
                     break
+    if matched_ann is None and ann_by_if_wildcard:
+        matched_ann = ann_by_if_wildcard.get(if_name)
 
     # 1. Live Route Evidence Deltas (highest single route delta on this interface)
     if "connected_route" in src_types:
@@ -357,8 +362,13 @@ def _score_interface_group(
         other_live_routes = [
             e for e in live_pool if e.interface_name != if_name and e.ip_first_int <= q_lo and q_hi <= e.ip_last_int
         ]
+        same_if_live_routes = [e for e in live_pool if e.interface_name == if_name]
         if not has_live_on_this_if and "manual" not in src_types:
-            if if_name == "vpn-domain" and other_live_routes:
+            if (
+                if_name == "vpn-domain"
+                and other_live_routes
+                or _is_cidr_covered_by_entries(q_lo, q_hi, same_if_live_routes)
+            ):
                 pass
             elif other_live_routes:
                 other_if = other_live_routes[0].interface_name
@@ -471,19 +481,19 @@ def _resolve_endpoint_intervals(
                 )
             )
         else:
-            lower_raw = term.raw.lower()
-            target_obj = (
-                obj_by_uid.get(term.raw)
-                or obj_by_name.get(term.raw)
-                or obj_by_uid.get(lower_raw)
-                or obj_by_name.get(lower_raw)
-            )
+            target_obj = _lookup_indexed_object(term.raw, term.raw, obj_by_uid, obj_by_name)
             if target_obj is None:
+                lower_raw = term.raw.lower()
                 # Case-insensitive fallback when caller passes a custom dict without pre-indexed lowercase keys
                 for k, candidate in obj_by_name.items():
                     if k.lower() == lower_raw:
                         target_obj = candidate
                         break
+                if target_obj is None:
+                    for k, candidate in obj_by_uid.items():
+                        if k.lower() == lower_raw:
+                            target_obj = candidate
+                            break
             if target_obj is not None:
                 expanded = _expand_cp_object(
                     target_obj,
@@ -514,11 +524,13 @@ def _locate_intervals_on_gateway(
     if_trust_static: dict[str, bool] | None = None,
     internal_live_entries: Sequence[GatewayTopologyEntry] | None = None,
     internal_static_entries: Sequence[GatewayTopologyEntry] | None = None,
+    ann_by_if_wildcard: dict[str, TopologyAnnotation] | None = None,
 ) -> list[_InterfaceMatch]:
     """Resolve `endpoint` to matching gateway interfaces with Evidence Delta Confidence Scoring."""
     q_lo = endpoint.ip_first_int
     q_hi = endpoint.ip_last_int
     eff_anns = ann_by_if_cidr or {}
+    eff_ann_wild = ann_by_if_wildcard or {}
     eff_weights = weights or TopologyConfidenceWeights()
     eff_if_trust_map = if_trust_static or {}
 
@@ -546,6 +558,7 @@ def _locate_intervals_on_gateway(
                 all_gw_entries=gw_entries,
                 has_live_routes=has_live_routes,
                 ann_by_if_cidr=eff_anns,
+                ann_by_if_wildcard=eff_ann_wild,
                 weights=eff_weights,
                 gw_trust_static=gw_trust_static,
                 if_trust_static=eff_if_trust_map,
@@ -599,6 +612,7 @@ def _locate_intervals_on_gateway(
                 all_gw_entries=gw_entries,
                 has_live_routes=has_live_routes,
                 ann_by_if_cidr=eff_anns,
+                ann_by_if_wildcard=eff_ann_wild,
                 weights=eff_weights,
                 gw_trust_static=gw_trust_static,
                 if_trust_static=eff_if_trust_map,
@@ -785,6 +799,7 @@ async def export_topology_prefixes(
                 all_gw_entries=eff_entries,
                 has_live_routes=has_live,
                 ann_by_if_cidr=ann_by_if_cidr,
+                ann_by_if_wildcard=ann_by_if_wild,
                 weights=weights,
                 gw_trust_static=gw_trust_static,
                 if_trust_static=if_trust_static,

@@ -455,3 +455,24 @@ def test_schema_empty_list_and_semantic_default_type_and_is_cleanup_rule() -> No
         service=["Any"],
     )
     assert is_cleanup_rule(real_cleanup) is True
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-1")
+def test_validate_template_rejects_blank_whitespace_and_duplicate_operation_ids() -> None:
+    """DA-005: Blank, whitespace-only, and duplicate explicit operation IDs fail validation."""
+    errs_blank = validate_template(
+        {"objects": [{"id": "   ", "type": "host", "name": "h1", "ipv4-address": "1.2.3.4"}]}
+    )
+    assert errs_blank
+
+    errs_dup = validate_template(
+        {
+            "objects": [
+                {"id": "op-1", "type": "host", "name": "h1", "ipv4-address": "1.2.3.4"},
+            ],
+            "services": [
+                {"id": " op-1 ", "type": "service-tcp", "name": "tcp-80", "port": "80"},
+            ],
+        }
+    )
+    assert any("duplicate operation id" in e for e in errs_dup)

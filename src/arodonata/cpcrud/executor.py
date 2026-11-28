@@ -15,13 +15,11 @@ Implements `Executor`:
 
 from __future__ import annotations
 
-import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from datetime import datetime
 
-from arodonata.core.context import AuthContext, UserContext, normalize_domain_key
+from arodonata.core.context import AuthContext, UserContext, normalize_domain_key, shielded_best_effort
 from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.events import (
     CPCRUDActionEvent,
@@ -218,6 +216,7 @@ class Executor:
                 "stale_domains": list(cumulative_report.stale_domains),
                 "retry_passes": cumulative_report.retry_passes,
             },
+            report=cumulative_report,
         )
 
     @traced
@@ -242,7 +241,8 @@ class Executor:
             keep_session=keep_session,
             retry_remaining=retry_remaining,
         )
-        async for _ in self.stream_apply(
+        run_report: ApplyReport | None = None
+        async for ev in self.stream_apply(
             plan,
             force=force,
             no_publish=no_publish,
@@ -253,7 +253,10 @@ class Executor:
             session_name=session_name,
             session_description=session_description,
         ):
-            pass
+            if isinstance(ev, CPCRUDCompletedEvent) and isinstance(ev.report, ApplyReport):
+                run_report = ev.report
+        if run_report is not None:
+            return run_report
         assert self._last_report is not None
         return self._last_report
 
@@ -285,7 +288,7 @@ class Executor:
             allow_foreign=allow_foreign,
         )
 
-    async def stream_publish_staged_session(
+    async def _stream_publish_staged_session_with_box(
         self,
         mgmt_name: str,
         domain: str | None = None,
@@ -302,8 +305,9 @@ class Executor:
         baseline_readable: bool | None = None,
         baseline_session_uid: str | None = None,
         baseline_published_at: datetime | None = None,
+        result_box: list[ApiCallResult] | None = None,
     ) -> AsyncIterator[CPCRUDEvent]:
-        """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
+        """Internal generator executing staged publish and capturing per-call `ApiCallResult` into `result_box`."""
         dom_label = f"{mgmt_name}:{domain}" if domain else mgmt_name
         dom_key = normalize_domain_key(domain)
         yield CPCRUDStartedEvent(
@@ -327,6 +331,8 @@ class Executor:
         if not take_res.success or active_sid is None:
             err_msg = take_res.error_message or take_res.error_code or "take-over-session failed"
             self._last_staged_publish_result = take_res
+            if result_box is not None:
+                result_box.append(take_res)
             yield CPCRUDActionEvent(
                 phase="failed",
                 mgmt_name=mgmt_name,
@@ -438,6 +444,8 @@ class Executor:
             self._staged_sessions.pop((mgmt_name, dom_key, session_uid), None)
             self._invalidate_domain(mgmt_name, domain)
             self._last_staged_publish_result = pub_res
+            if result_box is not None:
+                result_box.append(pub_res)
             yield CPCRUDDomainPublishedEvent(
                 mgmt_name=mgmt_name,
                 domain=domain or None,
@@ -461,6 +469,8 @@ class Executor:
             )
             pub_res = pub_res.model_copy(update={"error_message": safe_err})
             self._last_staged_publish_result = pub_res
+            if result_box is not None:
+                result_box.append(pub_res)
             yield CPCRUDActionEvent(
                 phase="failed",
                 mgmt_name=mgmt_name,
@@ -479,6 +489,43 @@ class Executor:
                 error=safe_err,
                 message=f"Publish failed for staged session {session_uid} on {dom_label}: {safe_err}",
             )
+
+    async def stream_publish_staged_session(
+        self,
+        mgmt_name: str,
+        domain: str | None = None,
+        *,
+        session_uid: str,
+        sid: str | None = None,
+        server_ip: str | None = None,
+        timeout: float | None = None,
+        auth: AuthContext | None = None,
+        force_disconnect: bool = False,
+        expected_session_name: str | None = None,
+        allow_foreign: bool = False,
+        allow_stale: bool = False,
+        baseline_readable: bool | None = None,
+        baseline_session_uid: str | None = None,
+        baseline_published_at: datetime | None = None,
+    ) -> AsyncIterator[CPCRUDEvent]:
+        """Adopt `session_uid`, publish it while streaming `CPCRUDEvent` items, log out, and invalidate domain cache."""
+        async for ev in self._stream_publish_staged_session_with_box(
+            mgmt_name,
+            domain,
+            session_uid=session_uid,
+            sid=sid,
+            server_ip=server_ip,
+            timeout=timeout,
+            auth=auth,
+            force_disconnect=force_disconnect,
+            expected_session_name=expected_session_name,
+            allow_foreign=allow_foreign,
+            allow_stale=allow_stale,
+            baseline_readable=baseline_readable,
+            baseline_session_uid=baseline_session_uid,
+            baseline_published_at=baseline_published_at,
+        ):
+            yield ev
 
     @traced
     async def publish_staged_session(
@@ -501,7 +548,8 @@ class Executor:
     ) -> ApiCallResult:
         """Adopt `session_uid`, publish it, log out, and invalidate the domain cache."""
         span_attrs(mgmt_name=mgmt_name, domain=domain, session_uid=session_uid)
-        async for _ in self.stream_publish_staged_session(
+        result_box: list[ApiCallResult] = []
+        async for _ in self._stream_publish_staged_session_with_box(
             mgmt_name,
             domain,
             session_uid=session_uid,
@@ -516,8 +564,11 @@ class Executor:
             baseline_readable=baseline_readable,
             baseline_session_uid=baseline_session_uid,
             baseline_published_at=baseline_published_at,
+            result_box=result_box,
         ):
             pass
+        if result_box:
+            return result_box[-1]
         assert self._last_staged_publish_result is not None
         return self._last_staged_publish_result
 
@@ -555,11 +606,9 @@ class Executor:
                 error_code=error_code,
             )
         finally:
-            with suppress(BaseException):
-                await asyncio.shield(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
+            await shielded_best_effort(self._api.logout_sid(mgmt_name, active_sid, server_ip=active_ip))
             if sid and sid != active_sid:
-                with suppress(BaseException):
-                    await asyncio.shield(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
+                await shielded_best_effort(self._api.logout_sid(mgmt_name, sid, server_ip=server_ip))
 
     @traced
     async def discard_staged_session(

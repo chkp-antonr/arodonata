@@ -842,3 +842,100 @@ async def test_failed_domain_discovery_does_not_suppress_smart_retries(tmp_path:
     assert ok_state is not None and ok_state.status == "ok"
 
     await db.close()
+
+
+@pytest.mark.spec("SCN-CACHE-021-1")
+@pytest.mark.asyncio
+async def test_midflight_domain_invalidation_cold_failure_synced_at_and_discovery_redaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-CACHE-021-1: Mid-flight domain invalidation preserved, cold failure synced_at=None, discovery logs/ApiQueryResult redacted."""
+    from arodonata.core.errors import REDACTED_PLACEHOLDER
+    from arodonata.core.models.common import ApiCallResult, ApiQueryResult
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.core.services import _domain_discovery as dd_mod
+    from arodonata.core.services import domain_service as ds_mod
+    from arodonata.core.services.sync_coordinator import DomainSyncCoordinator
+    from arodonata.mcp.tools._cache import _compute_cache_age
+
+    # 1. ApiQueryResult.__repr__ and __str__ scrub SIDs and secret keys
+    q_res = ApiQueryResult(
+        success=False,
+        objects=[{"uid": "u1", "sid": "leak_obj_sid_111"}],
+        total=1,
+        error_message='X-chkp-sid: leak_err_sid_222 {"password": "pw_val"}',
+        code="err_test",
+    )
+    for text in (repr(q_res), str(q_res)):
+        assert "leak_obj_sid_111" not in text
+        assert "leak_err_sid_222" not in text
+        assert "pw_val" not in text
+        assert REDACTED_PLACEHOLDER in text
+
+    # 2. Mid-flight invalidation preserved even on frozen/backward clock
+    clock = [datetime(2026, 11, 28, 12, 0, 0)]
+    tracker = DomainListRefreshTracker(ttl_seconds=3600.0, now_fn=lambda: clock[0])
+    pre_seq = tracker.invalidation_seq
+    tracker.invalidate("mds1")
+    # Backward clock step + mark_refreshed with pre-invalidation target_seq
+    clock[0] = datetime(2026, 11, 28, 11, 59, 0)
+    tracker.mark_refreshed("mds1", clock[0], target_seq=pre_seq)
+    assert tracker.needs_refresh("mds1", has_cached_domains=True, mode="smart") is True
+
+    pre_seq_2 = tracker.invalidation_seq
+    tracker.invalidate(None)
+    tracker.mark_refreshed("mds1", clock[0], target_seq=pre_seq_2)
+    assert tracker.needs_refresh("mds1", has_cached_domains=True, persisted_synced_at=clock[0], mode="smart") is True
+
+    # 3. Discovery warning logs redact SIDs and cold DomainSyncCoordinator failure keeps synced_at=None
+    warn_msgs: list[str] = []
+    monkeypatch.setattr(ds_mod.logger, "warning", lambda msg, **_kw: warn_msgs.append(str(msg)))
+    monkeypatch.setattr(dd_mod.logger, "warning", lambda msg, **_kw: warn_msgs.append(str(msg)))
+
+    class _LeakingFailApi:
+        async def api_call(self, _m: str, cmd: str, _p: Any = None, **_k: Any) -> ApiCallResult:
+            if cmd == "show-domains":
+                return ApiCallResult(
+                    success=False,
+                    status_code=403,
+                    error_code="generic_err_no_permissions",
+                    error_message="denied for X-chkp-sid: sid_secret_warn_999",
+                )
+            return ApiCallResult(success=False, status_code=404, error_message="not found")
+
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    svc = DomainService(settings=settings, api=_LeakingFailApi(), cache=cache, now_fn=lambda: clock[0])  # type: ignore[arg-type]
+    await svc.get_domains("mds1", cache_mode="force")
+    assert warn_msgs
+    assert all("sid_secret_warn_999" not in m for m in warn_msgs)
+    assert any(REDACTED_PLACEHOLDER in m for m in warn_msgs)
+
+    # 4. Cold DomainSyncCoordinator failure leaves synced_at=None
+    from arodonata.adapters.storage.lock_adapter import SqlLockAdapter
+
+    await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp")])
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=_LeakingFailApi(),  # type: ignore[arg-type]
+        cache=cache,
+        lock_port=SqlLockAdapter(db),
+        domain_service=svc,
+        now_fn=lambda: clock[0],
+    )
+    svc.tracker.mark_refreshed("mds1", clock[0])
+
+    async def _fail_handler(_probe: Any, _emit: Any) -> int:
+        raise RuntimeError("cold sync boom")
+
+    await coord.ensure(scope="objects", item_types=["host"], handler=_fail_handler, mgmt_name="mds1", domains=["Corp"])
+    failed_slice = await cache.get_sync_state("mds1", "Corp", "objects", "host")
+    assert failed_slice is not None
+    assert failed_slice.status == "failed"
+    assert failed_slice.synced_at is None
+    stub_client = type("_ClientStub", (), {"cache": cache})()
+    assert await _compute_cache_age(stub_client, "mds1", "Corp", "objects", "host", now_fn=lambda: clock[0]) is None
+
+    await db.close()

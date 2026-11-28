@@ -2779,3 +2779,285 @@ def test_render_safe_inline_markdown_md_blocks_nested_links_and_images_in_bold_a
     assert italic_img == r"*!\[beacon\](https://example.invalid/x.png)*"
     assert "[click]" not in bold_js
     assert "![beacon]" not in italic_img
+
+
+@pytest.mark.spec("SCN-REPORT-009-1")
+async def test_range_scope_to_session_omits_date_filter_and_owned_session_context_disables_cleanly() -> None:
+    """DA-029, DA-030, DA-042: RangeScope(to_session=...) omits server date bounds and failed OwnedSession stays disabled."""
+    from datetime import UTC, datetime
+
+    show_sessions_payloads: list[dict[str, Any]] = []
+    calls_by_cmd: list[tuple[str, str | None]] = []
+
+    class _ReportFakeApi:
+        async def api_query(
+            self, _m: str, cmd: str, payload: dict[str, Any] | None = None, **_k: Any
+        ) -> ApiQueryResult:
+            if cmd == "show-sessions":
+                show_sessions_payloads.append(dict(payload or {}))
+                return ApiQueryResult(
+                    success=True,
+                    objects=[
+                        {"uid": "s-1", "publish-time": {"posix": 1700000000000}, "changes": 1},
+                        {"uid": "s-2", "publish-time": {"posix": 1700100000000}, "changes": 1},
+                    ],
+                    total=2,
+                )
+            return ApiQueryResult(success=True, objects=[], total=0)
+
+        async def api_call(self, _m: str, cmd: str, _p: dict[str, Any] | None = None, **kw: Any) -> ApiCallResult:
+            calls_by_cmd.append((cmd, kw.get("sid")))
+            if cmd == "show-session" and kw.get("sid") is not None:
+                return ApiCallResult(
+                    success=False, status_code=400, error_code="err_session_expired", error_message="bad sid"
+                )
+            if cmd == "show-session":
+                return ApiCallResult(
+                    success=True, data={"uid": "s-owned", "user-name": "admin", "locks": 0, "changes": 1}
+                )
+            if cmd == "show-changes":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "changes": [
+                            {
+                                "changes": [
+                                    {
+                                        "uid": "chg-1",
+                                        "type": "host",
+                                        "action": "Modify",
+                                        "changed-fields": [
+                                            {"name": "groups", "new-value": ["bare-uid-1", "bare-uid-2"]}
+                                        ],
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                )
+            if cmd == "show-object":
+                uid = str((_p or {}).get("uid") or "")
+                return ApiCallResult(success=True, data={"object": {"uid": uid, "name": f"Obj-{uid}"}})
+            return ApiCallResult(success=True, data={})
+
+    class _MinRepCache:
+        async def get_object_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_service_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_rulebase_snapshot(self, *_a: Any, **_k: Any) -> None:
+            return None
+
+    owned = OwnedSession(
+        sid="owned-bad-sid", server_ip="10.0.0.1", session_uid="s-owned", mgmt_name="mds1", domain="Corp"
+    )
+    report = await collect_change_report(
+        _ReportFakeApi(),  # type: ignore[arg-type]
+        _MinRepCache(),  # type: ignore[arg-type]
+        [
+            RangeScope(
+                mgmt_name="mds1",
+                domain="Corp",
+                to_session="s-1",
+                from_date=datetime(2023, 11, 14, tzinfo=UTC),
+                to_date=datetime(2023, 11, 15, tzinfo=UTC),
+            ),
+            SessionScope(
+                mgmt_name="mds1",
+                domain="Corp",
+                session_uids=["s-owned"],
+                owned_sessions=[owned],
+            ),
+        ],
+    )
+    assert show_sessions_payloads
+    assert "from" not in show_sessions_payloads[0]
+    assert "to" not in show_sessions_payloads[0]
+    # Once show-session rejected owned-bad-sid, neither show-changes nor show-object nor placement uses it again
+    assert ("show-changes", "owned-bad-sid") not in calls_by_cmd
+    assert ("show-object", "owned-bad-sid") not in calls_by_cmd
+    assert len([w for w in report.warnings if w.code == "owned_session_error"]) == 1
+
+
+@pytest.mark.spec("SCN-REPORT-010-1")
+def test_scn_report_010_1_markdown_backslash_before_delimiter_neutralization() -> None:
+    """SCN-REPORT-010-1: backslash-first Markdown escaping blocks link/code/table-split bypasses across reports and rulebase."""
+    from arodonata.core.primitives import escape_markdown_cell, escape_markdown_code
+    from arodonata.reports._renderer_formatting import _esc_md, _esc_md_code, render_safe_inline_markdown_md
+    from arodonata.rulebase.filter import _esc_rule_code, _esc_rule_md
+
+    # Both reports and rulebase delegate to shared primitives
+    payload_link = r"\[phish\](https://evil.example/steal)"
+    payload_pipe = r"a\|b"
+    payload_code = r"\`injected\`"
+    for fn in (escape_markdown_cell, _esc_md, _esc_rule_md):
+        assert fn(payload_link) == r"\\\[phish\\\](https://evil.example/steal)"
+        assert fn(payload_pipe) == r"a\\\|b"
+        assert fn(payload_code) == r"\\\`injected\\\`"
+        # Preserve existing non-backslash pipe & CRLF normalization
+        assert fn("a\r\nb|c") == "a b\\|c"
+
+    # Inline safe markdown escapes literal backslashes before brackets in bold/italic/plain/unsafe-link branches
+    assert "**\\[phish\\]" not in render_safe_inline_markdown_md(r"**\[phish\](https://evil.example/steal)**")
+    assert r"\\\[phish\\\]" in render_safe_inline_markdown_md(r"**\[phish\](https://evil.example/steal)**")
+    assert r"\\\[click\\\]" in render_safe_inline_markdown_md(r"\[click\](javascript:alert(1))")
+
+    # Code-span helper preserves unrelated Windows backslashes while hardening backslash-before-pipe
+    for code_fn in (escape_markdown_code, _esc_md_code, _esc_rule_code):
+        assert code_fn(r"C:\path\file") == r"C:\path\file"
+        assert code_fn(r"a\|b") == r"a\\\|b"
+        assert code_fn("a|b") == r"a\|b"
+
+
+@pytest.mark.spec("SCN-REPORT-010-2")
+@pytest.mark.asyncio
+async def test_scn_report_010_2_owned_session_404_preservation_partial_package_warm_and_warning_code() -> None:
+    """SCN-REPORT-010-2: show-object 404 keeps healthy OwnedSession alive, partial slice triggers full warm, and WarningCode includes timestamp warning."""
+    from typing import get_args
+
+    from arodonata.core.models.rulebase import (
+        DomainRulebaseSnapshot,
+        RulebasePackageLayerEntry,
+    )
+    from arodonata.reports.models import RuleChangeEntry, SessionChangeReport, WarningCode
+    from arodonata.reports.placement import apply_session_rule_placement
+
+    # 1. WarningCode Literal includes range_session_timestamp_missing
+    assert "range_session_timestamp_missing" in get_args(WarningCode)
+
+    # 2. show-object 404 on OwnedSession retries read-only WITHOUT disabling healthy OwnedSession
+    uid_404 = "00000000-0000-0000-0000-000000000404"
+    uid_unpub = "00000000-0000-0000-0000-000000000002"
+    calls: list[tuple[str, str | None, str | None]] = []
+
+    class _Owned404Api:
+        async def api_query(self, *_a: Any, **_kw: Any) -> Any:
+            from arodonata.core.models.common import ApiQueryResult
+
+            return ApiQueryResult(success=True, items=[], total=0)
+
+        async def api_call(self, _m: str, cmd: str, payload: dict[str, Any] | None = None, **kw: Any) -> Any:
+            from arodonata.core.models.common import ApiCallResult
+
+            sid = kw.get("sid")
+            uid = str((payload or {}).get("uid") or "")
+            calls.append((cmd, sid, uid))
+            if cmd == "show-session":
+                return ApiCallResult(
+                    success=True,
+                    data={"uid": "s-live", "user-name": "admin", "locks": 1, "changes": 2},
+                )
+            if cmd == "show-changes":
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "changes": [
+                            {
+                                "modified-objects": [
+                                    {
+                                        "uid": "00000000-0000-0000-0000-000000000099",
+                                        "type": "access-rule",
+                                        "layer": "Network",
+                                        "source": [uid_404, uid_unpub],
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                )
+            if cmd == "show-object":
+                if uid == uid_404 and sid == "owned-good-sid":
+                    return ApiCallResult(
+                        success=False,
+                        status_code=404,
+                        error_code="generic_err_object_not_found",
+                        error_message=f"Requested object [{uid_404}] not found",
+                    )
+                if uid == uid_404 and sid is None:
+                    return ApiCallResult(success=True, data={"object": {"uid": uid_404, "name": "RecoveredPublished"}})
+                if uid == uid_unpub and sid == "owned-good-sid":
+                    return ApiCallResult(success=True, data={"object": {"uid": uid_unpub, "name": "UnpubObj"}})
+                return ApiCallResult(success=False, status_code=404, error_code="generic_err_object_not_found")
+            if cmd == "show-packages":
+                return ApiCallResult(success=True, data={"packages": []})
+            return ApiCallResult(success=True, data={})
+
+    class _MinCache:
+        async def get_object_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_service_by_uid(self, *_a: Any) -> None:
+            return None
+
+        async def get_domain_rulebase(self, *_a: Any) -> DomainRulebaseSnapshot:
+            return DomainRulebaseSnapshot(mgmt_name="mds1", domain_name="Corp")
+
+        async def get_sync_state(self, *_a: Any) -> None:
+            return None
+
+    owned = OwnedSession(
+        sid="owned-good-sid", server_ip="10.0.0.1", session_uid="s-live", mgmt_name="mds1", domain="Corp"
+    )
+    report = await collect_change_report(
+        _Owned404Api(),  # type: ignore[arg-type]
+        _MinCache(),  # type: ignore[arg-type]
+        [SessionScope(mgmt_name="mds1", domain="Corp", session_uids=["s-live"], owned_sessions=[owned])],
+    )
+    assert ("show-object", None, uid_404) in calls
+    assert ("show-object", "owned-good-sid", uid_unpub) in calls
+    assert [w for w in report.warnings if w.code == "owned_session_error"] == []
+
+    # 3. Partial package snapshot (sync_state is None for "*") triggers refresh_rulebase_fn, and failure preserves partial cache
+    from arodonata.core.models.rulebase import RulebaseLayerEntry
+
+    partial_snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        layers=[
+            RulebaseLayerEntry(mgmt_name="mds1", domain_name="Corp", uid="l-1", name="Network", rulebase_type="access")
+        ],
+        package_layers=[
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-1",
+                package_name="Standard",
+                rulebase_type="access",
+                layer_uid="l-1",
+                layer_name="Network",
+                position=1,
+            )
+        ],
+    )
+
+    class _PartialCache:
+        async def get_domain_rulebase(self, *_a: Any) -> DomainRulebaseSnapshot:
+            return partial_snap
+
+        async def get_sync_state(self, *_a: Any) -> None:
+            return None
+
+    warm_calls: list[tuple[str, str]] = []
+
+    async def _failing_warm(mgmt: str, dom: str) -> None:
+        warm_calls.append((mgmt, dom))
+        raise RuntimeError("transient warm failure")
+
+    sess_rep = SessionChangeReport(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        session_uid="s-part",
+        state="published",
+        rule_changes=[RuleChangeEntry(uid="r-part-1", name="R1", operation="added", rulebase_type="access")],
+    )
+    await apply_session_rule_placement(
+        sess_rep,
+        api=_Owned404Api(),  # type: ignore[arg-type]
+        cache=_PartialCache(),  # type: ignore[arg-type]
+        warnings=[],
+        refresh_rulebase_fn=_failing_warm,
+    )
+    assert warm_calls == [("mds1", "Corp")]
+    assert sess_rep.numbering_source == "cache"

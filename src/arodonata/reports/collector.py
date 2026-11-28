@@ -20,13 +20,20 @@ from typing import Any, Protocol
 
 import arlogi
 
-from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
-from arodonata.core.models.common import parse_cp_publish_timestamp, utc_now
+from arodonata.core.errors import (
+    ChangeReportInputError,
+    ServerIdentityError,
+    is_not_found_error,
+    redact_sid,
+    sanitize_mapping,
+)
+from arodonata.core.models.common import ApiCallResult, parse_cp_publish_timestamp, utc_now
 from arodonata.core.ports import ApiPort, ObjectCachePort, RulebaseCachePort, ServiceCachePort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.reports._collector_changes import (
     _extract_session_user_from_changes,
     _filter_range_sessions,
+    _OwnedSessionContext,
     _parse_change_containers,
     _parse_rule_and_object_changes,
     _replace_resolved_uids_in_session,
@@ -110,7 +117,7 @@ async def _discover_target_sessions(
                 "details-level": "full",
                 "view-published-sessions": True,
             }
-            if scope.from_session is None:
+            if scope.from_session is None and scope.to_session is None:
                 if scope.from_date is not None:
                     payload["from"] = (scope.from_date.astimezone(UTC) - timedelta(days=1)).isoformat()
                 if scope.to_date is not None:
@@ -221,8 +228,7 @@ async def _resolve_session_bare_uids(
     mgmt_name: str,
     dom_name: str,
     s_uid: str,
-    owned: OwnedSession | None,
-    known_sids: list[str],
+    owned_ctx: _OwnedSessionContext,
     bare_uids: set[str],
     known_names: dict[str, str],
     global_resolved_uids: dict[tuple[str, str, str], str],
@@ -233,6 +239,7 @@ async def _resolve_session_bare_uids(
 ) -> tuple[int, bool]:
     """Resolve bare reference UIDs via local cache first and bounded `show-object` calls second."""
     unresolved_uids = [u for u in sorted(bare_uids) if u not in known_names]
+    known_sids = owned_ctx.known_sids
     for u in unresolved_uids:
         cache_key = (mgmt_name, dom_name, u)
         if cache_key in global_resolved_uids:
@@ -269,59 +276,64 @@ async def _resolve_session_bare_uids(
             continue
 
         uid_lookup_count += 1
+        obj_res: ApiCallResult | None = None
+        last_exc: Exception | None = None
+        used_owned_on_call = owned_ctx.sid is not None
         try:
             obj_res = await api.api_call(
                 mgmt_name,
                 "show-object",
                 {"uid": u, "details-level": "standard"},
                 domain=dom_name or None,
-                sid=owned.sid if owned is not None else None,
-                server_ip=owned.server_ip if (owned is not None and owned.server_ip) else None,
+                sid=owned_ctx.sid,
+                server_ip=owned_ctx.server_ip,
             )
-            if not obj_res.success and owned is not None:
-                obj_res = await api.api_call(
-                    mgmt_name,
-                    "show-object",
-                    {"uid": u, "details-level": "standard"},
-                    domain=dom_name or None,
-                )
-            if obj_res.success and isinstance(obj_res.data, dict):
-                inner = obj_res.data.get("object") if isinstance(obj_res.data.get("object"), dict) else obj_res.data
-                resolved_name = inner.get("name") if isinstance(inner, dict) else None
-                if isinstance(resolved_name, str) and resolved_name:
-                    safe_name = redact_sid(resolved_name, known_sids=known_sids)
-                    known_names[u] = safe_name
-                    global_resolved_uids[cache_key] = safe_name
-                else:
-                    warnings.append(
-                        ReportWarning(
-                            code="names_unresolved",
-                            mgmt_name=mgmt_name,
-                            domain=dom_name or None,
-                            session_uid=s_uid,
-                            message=f"show-object returned no name for UID {u}.",
-                            details={"uid": u},
-                        )
-                    )
-            else:
-                err_txt = redact_sid(
-                    obj_res.error_message or obj_res.error_code or "show-object failed",
-                    known_sids=known_sids,
-                )
-                warnings.append(
-                    ReportWarning(
-                        code="names_unresolved",
-                        mgmt_name=mgmt_name,
+            if not obj_res.success and used_owned_on_call:
+                if is_not_found_error(obj_res.status_code, obj_res.error_code, obj_res.error_message):
+                    obj_res = await api.api_call(
+                        mgmt_name,
+                        "show-object",
+                        {"uid": u, "details-level": "standard"},
                         domain=dom_name or None,
-                        session_uid=s_uid,
-                        message=f"Failed to resolve object name for UID {u}: {err_txt}",
-                        details={"uid": u},
                     )
-                )
+                else:
+                    err_owned = redact_sid(
+                        obj_res.error_message or obj_res.error_code or "show-object failed",
+                        known_sids=known_sids,
+                    )
+                    owned_ctx.disable(
+                        message=f"OwnedSession failed on show-object for UID {u} ({err_owned}); retrying read-only.",
+                    )
+                    obj_res = await api.api_call(
+                        mgmt_name,
+                        "show-object",
+                        {"uid": u, "details-level": "standard"},
+                        domain=dom_name or None,
+                    )
         except ServerIdentityError:
             raise
         except Exception as exc:
-            safe_err = redact_sid(str(exc), known_sids=known_sids)
+            if used_owned_on_call:
+                safe_owned_err = redact_sid(str(exc), known_sids=known_sids)
+                owned_ctx.disable(
+                    message=f"OwnedSession error on show-object for UID {u} ({safe_owned_err}); retrying read-only.",
+                )
+                try:
+                    obj_res = await api.api_call(
+                        mgmt_name,
+                        "show-object",
+                        {"uid": u, "details-level": "standard"},
+                        domain=dom_name or None,
+                    )
+                except ServerIdentityError:
+                    raise
+                except Exception as exc2:
+                    last_exc = exc2
+            else:
+                last_exc = exc
+
+        if last_exc is not None:
+            safe_err = redact_sid(str(last_exc), known_sids=known_sids)
             warnings.append(
                 ReportWarning(
                     code="names_unresolved",
@@ -329,6 +341,42 @@ async def _resolve_session_bare_uids(
                     domain=dom_name or None,
                     session_uid=s_uid,
                     message=f"Error resolving object name for UID {u}: {safe_err}",
+                    details={"uid": u},
+                )
+            )
+            continue
+
+        assert obj_res is not None
+        if obj_res.success and isinstance(obj_res.data, dict):
+            inner = obj_res.data.get("object") if isinstance(obj_res.data.get("object"), dict) else obj_res.data
+            resolved_name = inner.get("name") if isinstance(inner, dict) else None
+            if isinstance(resolved_name, str) and resolved_name:
+                safe_name = redact_sid(resolved_name, known_sids=known_sids)
+                known_names[u] = safe_name
+                global_resolved_uids[cache_key] = safe_name
+            else:
+                warnings.append(
+                    ReportWarning(
+                        code="names_unresolved",
+                        mgmt_name=mgmt_name,
+                        domain=dom_name or None,
+                        session_uid=s_uid,
+                        message=f"show-object returned no name for UID {u}.",
+                        details={"uid": u},
+                    )
+                )
+        else:
+            err_txt = redact_sid(
+                obj_res.error_message or obj_res.error_code or "show-object failed",
+                known_sids=known_sids,
+            )
+            warnings.append(
+                ReportWarning(
+                    code="names_unresolved",
+                    mgmt_name=mgmt_name,
+                    domain=dom_name or None,
+                    session_uid=s_uid,
+                    message=f"Failed to resolve object name for UID {u}: {err_txt}",
                     details={"uid": u},
                 )
             )
@@ -384,29 +432,19 @@ async def collect_change_report(
 
     for key in session_order:
         mgmt_name, dom_name, s_uid, preloaded_meta, owned = target_sessions[key]
-        known_sids = [owned.sid] if owned is not None else []
-        eff_sid: str | None = owned.sid if owned is not None else None
-        eff_server_ip: str | None = owned.server_ip if (owned is not None and owned.server_ip) else None
-        if owned is not None and owned.domain and dom_name and owned.domain.strip().lower() != dom_name.strip().lower():
-            warnings.append(
-                ReportWarning(
-                    code="owned_session_not_used",
-                    mgmt_name=mgmt_name,
-                    domain=dom_name or None,
-                    session_uid=s_uid,
-                    message=(
-                        f"OwnedSession domain {owned.domain!r} does not match target domain {dom_name!r}; "
-                        "falling back to shared read-only session."
-                    ),
-                )
-            )
-            eff_sid = None
-            eff_server_ip = None
+        owned_ctx = _OwnedSessionContext(
+            owned=owned,
+            mgmt_name=mgmt_name,
+            dom_name=dom_name,
+            s_uid=s_uid,
+            warnings=warnings,
+        )
+        known_sids = owned_ctx.known_sids
 
         session_meta: dict[str, Any] | None = preloaded_meta
         if session_meta is None:
             for attempt_sid, attempt_ip in (
-                ((eff_sid, eff_server_ip), (None, None)) if eff_sid is not None else ((None, None),)
+                ((owned_ctx.sid, owned_ctx.server_ip), (None, None)) if owned_ctx.sid is not None else ((None, None),)
             ):
                 try:
                     s_res = await api.api_call(
@@ -435,17 +473,9 @@ async def collect_change_report(
                         known_sids=known_sids,
                     )
                     if attempt_sid is not None:
-                        warnings.append(
-                            ReportWarning(
-                                code="owned_session_error",
-                                mgmt_name=mgmt_name,
-                                domain=dom_name or None,
-                                session_uid=s_uid,
-                                message=f"OwnedSession failed on show-session for {s_uid} ({err_txt}); retrying read-only.",
-                            )
+                        owned_ctx.disable(
+                            message=f"OwnedSession failed on show-session for {s_uid} ({err_txt}); retrying read-only."
                         )
-                        eff_sid = None
-                        eff_server_ip = None
                         continue
                     warnings.append(
                         ReportWarning(
@@ -462,17 +492,9 @@ async def collect_change_report(
                 except Exception as exc:
                     safe_err = redact_sid(str(exc), known_sids=known_sids)
                     if attempt_sid is not None:
-                        warnings.append(
-                            ReportWarning(
-                                code="owned_session_error",
-                                mgmt_name=mgmt_name,
-                                domain=dom_name or None,
-                                session_uid=s_uid,
-                                message=f"OwnedSession error on show-session for {s_uid} ({safe_err}); retrying read-only.",
-                            )
+                        owned_ctx.disable(
+                            message=f"OwnedSession error on show-session for {s_uid} ({safe_err}); retrying read-only."
                         )
-                        eff_sid = None
-                        eff_server_ip = None
                         continue
                     warnings.append(
                         ReportWarning(
@@ -492,7 +514,7 @@ async def collect_change_report(
         ops_list: list[dict[str, Any]] = []
         changes_user_name = ""
         for attempt_sid, attempt_ip in (
-            ((eff_sid, eff_server_ip), (None, None)) if eff_sid is not None else ((None, None),)
+            ((owned_ctx.sid, owned_ctx.server_ip), (None, None)) if owned_ctx.sid is not None else ((None, None),)
         ):
             try:
                 ch_res = await api.api_call(
@@ -524,17 +546,9 @@ async def collect_change_report(
                     known_sids=known_sids,
                 )
                 if attempt_sid is not None:
-                    warnings.append(
-                        ReportWarning(
-                            code="owned_session_error",
-                            mgmt_name=mgmt_name,
-                            domain=dom_name or None,
-                            session_uid=s_uid,
-                            message=f"OwnedSession failed on show-changes for {s_uid} ({err_txt}); retrying read-only.",
-                        )
+                    owned_ctx.disable(
+                        message=f"OwnedSession failed on show-changes for {s_uid} ({err_txt}); retrying read-only."
                     )
-                    eff_sid = None
-                    eff_server_ip = None
                     continue
                 warnings.append(
                     ReportWarning(
@@ -550,17 +564,9 @@ async def collect_change_report(
             except Exception as exc:
                 safe_err = redact_sid(str(exc), known_sids=known_sids)
                 if attempt_sid is not None:
-                    warnings.append(
-                        ReportWarning(
-                            code="owned_session_error",
-                            mgmt_name=mgmt_name,
-                            domain=dom_name or None,
-                            session_uid=s_uid,
-                            message=f"OwnedSession error on show-changes for {s_uid} ({safe_err}); retrying read-only.",
-                        )
+                    owned_ctx.disable(
+                        message=f"OwnedSession error on show-changes for {s_uid} ({safe_err}); retrying read-only."
                     )
-                    eff_sid = None
-                    eff_server_ip = None
                     continue
                 warnings.append(
                     ReportWarning(
@@ -594,15 +600,13 @@ async def collect_change_report(
                 filtered_count=filtered_sys_cnt,
             )
 
-        active_owned = owned if eff_sid is not None else None
         uid_lookup_count, lookup_cap_warned = await _resolve_session_bare_uids(
             api,
             cache,
             mgmt_name=mgmt_name,
             dom_name=dom_name,
             s_uid=s_uid,
-            owned=active_owned,
-            known_sids=known_sids,
+            owned_ctx=owned_ctx,
             bare_uids=bare_uids,
             known_names=known_names,
             global_resolved_uids=global_resolved_uids,
@@ -648,7 +652,7 @@ async def collect_change_report(
             session_report,
             api=api,
             cache=cache,
-            owned_session=active_owned,
+            owned_session=owned_ctx.active_owned,
             warnings=warnings,
             now_fn=now_fn,
             refresh_rulebase_fn=refresh_rulebase_fn,

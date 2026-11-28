@@ -1144,3 +1144,189 @@ async def test_staged_publish_baseline_fail_closed_and_check_domain_head_dispatc
     rep = await executor.apply(plan)
     assert rep.created_count == 1
     assert head_calls == [("mds1", "Corp"), ("mds1", "Corp")]
+
+
+@pytest.mark.spec("SCN-CPCRUD-018-2")
+async def test_executor_concurrent_apply_publish_and_owner_fair_staged_registry_eviction() -> None:
+    """DA-028 & DA-033: Concurrent Executor.apply() returns own report without _last_report race, and >256 staged sessions evict owner-fairly."""
+    import asyncio
+
+    from arodonata.core.context import AuthContext, WriteSession
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.cpcrud._executor_pass import _register_staged_session
+    from arodonata.cpcrud.executor import Executor
+    from arodonata.cpcrud.models import DomainStamp, Outcome, Plan, PlannedAction, StagedSessionInfo
+
+    discarded_sids: list[str] = []
+    logged_out_sids: list[str] = []
+
+    class _ConcurrentApi:
+        async def create_dedicated_session(self, *_a: Any, **_k: Any) -> tuple[str, str]:
+            return f"sid-{len(logged_out_sids) + 1}", "10.0.0.1"
+
+        async def logout_sid(self, _m: str, sid: str, **_k: Any) -> bool:
+            logged_out_sids.append(sid)
+            return True
+
+        async def api_call(self, _m: str, cmd: str, payload: dict[str, Any] | None = None, **kw: Any) -> ApiCallResult:
+            if cmd == "show-last-published-session":
+                return ApiCallResult(success=True, data={"uid": "head-1", "publish-time": {"posix": 1700000000000}})
+            if cmd == "show-session":
+                return ApiCallResult(success=True, data={"uid": f"suid-{payload or 'x'}"})
+            if cmd == "add-host":
+                name = (payload or {}).get("name", "")
+                await asyncio.sleep(0.02 if name == "slow-host" else 0.001)
+                return ApiCallResult(success=True, data={"uid": f"uid-{name}", "name": name})
+            if cmd == "discard" and kw.get("sid"):
+                discarded_sids.append(str(kw["sid"]))
+            return ApiCallResult(success=True, data={})
+
+    ex = Executor(api=_ConcurrentApi())  # type: ignore[arg-type]
+    stamp = DomainStamp(mgmt_name="mds1", domain_name="Corp", readable=True, last_session_uid="head-1")
+    plan_slow = Plan(
+        domain_stamps={"mds1:Corp": stamp},
+        actions=[
+            PlannedAction(
+                action_id="a-slow",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="add",
+                object_type="host",
+                name="slow-host",
+                outcome=Outcome.CREATE,
+                command="add-host",
+                payload={"name": "slow-host", "ip-address": "10.0.0.1"},
+            )
+        ],
+    )
+    plan_fast = Plan(
+        domain_stamps={"mds1:Corp": stamp},
+        actions=[
+            PlannedAction(
+                action_id="a-fast",
+                mgmt_name="mds1",
+                domain_name="Corp",
+                operation="add",
+                object_type="host",
+                name="fast-host",
+                outcome=Outcome.CREATE,
+                command="add-host",
+                payload={"name": "fast-host", "ip-address": "10.0.0.2"},
+            )
+        ],
+    )
+    rep_slow, rep_fast = await asyncio.gather(ex.apply(plan_slow), ex.apply(plan_fast))
+    assert [r.action_id for r in rep_slow.results] == ["a-slow"]
+    assert [r.action_id for r in rep_fast.results] == ["a-fast"]
+
+    # DA-033: 256 staged sessions across single-session peer + greedy owner -> new caller evicts greedy owner, not peer
+    from collections import OrderedDict
+
+    registry: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
+    peer_info = StagedSessionInfo(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        sid="sid-peer",
+        server_ip="10.0.0.1",
+        session_uid="suid-peer",
+        owner_key="peer-1",
+    )
+    registry[("mds1", "Corp", "suid-peer")] = peer_info
+    for i in range(255):
+        registry[("mds1", "Corp", f"suid-g-{i}")] = StagedSessionInfo(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            sid=f"sid-g-{i}",
+            server_ip="10.0.0.1",
+            session_uid=f"suid-g-{i}",
+            owner_key="greedy",
+        )
+    auth_new = AuthContext(api_key="brand-new-caller")
+    ws_new = WriteSession(
+        mgmt_name="mds1", domain_name="Corp", sid="sid-new", server_ip="10.0.0.1", session_uid="suid-new"
+    )
+    staged_out: list[StagedSessionInfo] = []
+    await _register_staged_session(
+        _ConcurrentApi(),  # type: ignore[arg-type]
+        "mds1",
+        "Corp",
+        "Corp",
+        ws_new,
+        "sess-new",
+        staged_out,
+        registry,
+        stamp=stamp,
+        owner_key=auth_new.identity_key,
+    )
+    assert ("mds1", "Corp", "suid-peer") in registry
+    assert ("mds1", "Corp", "suid-g-0") not in registry
+    assert "sid-g-0" in discarded_sids
+    assert "sid-g-0" in logged_out_sids
+
+
+@pytest.mark.spec("SCN-CPCRUD-019-2")
+@pytest.mark.asyncio
+async def test_scn_cpcrud_019_2_user_context_owner_isolation_and_single_peer_capacity_rejection() -> None:
+    """SCN-CPCRUD-019-2: Executor staged registry isolates UserContext callers and rejects 257th single-peer session instead of evicting peers."""
+    from collections import OrderedDict
+
+    from arodonata.core.context import AuthContext, UserContext, WriteSession
+    from arodonata.core.errors import CacheError
+    from arodonata.cpcrud._executor_helpers import StagedSessionInfo
+    from arodonata.cpcrud._executor_pass import _register_staged_session, _resolve_executor_owner_key
+
+    assert _resolve_executor_owner_key(None, UserContext(client_id="TEAM_A", user_id="TEAM_A")) == "TEAM_A"
+    assert _resolve_executor_owner_key(None, UserContext(client_id="TEAM_B", user_id="u2")) == "TEAM_B:u2"
+    assert _resolve_executor_owner_key(AuthContext(api_key="k1"), UserContext(client_id="TEAM_A", user_id="u1")) != (
+        _resolve_executor_owner_key(AuthContext(api_key="k1"), UserContext(client_id="TEAM_B", user_id="u2"))
+    )
+
+    discarded: list[str] = []
+    logged_out: list[str] = []
+
+    class _PeerCapApi:
+        async def api_call(self, _m: str, cmd: str, _p: dict[str, Any] | None = None, **kw: Any) -> ApiCallResult:
+            if cmd == "discard" and kw.get("sid"):
+                discarded.append(str(kw["sid"]))
+            return ApiCallResult(success=True, data={})
+
+        async def logout_sid(self, _m: str, sid: str, **_kw: Any) -> None:
+            logged_out.append(sid)
+
+    registry: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
+    for i in range(256):
+        registry[("mds1", "Corp", f"suid-peer-{i}")] = StagedSessionInfo(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            sid=f"sid-peer-{i}",
+            server_ip="10.0.0.1",
+            session_uid=f"suid-peer-{i}",
+            owner_key=f"peer-{i}",
+        )
+
+    ws_overflow = WriteSession(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        sid="sid-257",
+        server_ip="10.0.0.1",
+        session_uid="suid-257",
+    )
+    staged_out: list[StagedSessionInfo] = []
+    with pytest.raises(CacheError, match="256 distinct single-session callers"):
+        await _register_staged_session(
+            _PeerCapApi(),  # type: ignore[arg-type]
+            "mds1",
+            "Corp",
+            "Corp",
+            ws_overflow,
+            "sess-257",
+            staged_out,
+            registry,
+            stamp=None,
+            owner_key="peer-257",
+        )
+    assert len(registry) == 256
+    assert ("mds1", "Corp", "suid-peer-0") in registry
+    assert "sid-peer-0" not in discarded
+    assert "sid-257" in discarded
+    assert "sid-257" in logged_out

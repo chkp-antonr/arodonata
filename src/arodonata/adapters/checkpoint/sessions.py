@@ -282,12 +282,15 @@ class LoginCoordinator:
         span_attrs(mgmt_name=mgmt_name, domain=dom_key, force_new=force_new)
 
         validated_ip: str | None = None
+        prevalidated_target: tuple[str, str, int, str | None] | None = None
         if server_ip:
-            validated_ip, _, _ = await self.resolve_target_ips(
+            v_ip, v_mds_ip, v_port = await self.resolve_target_ips(
                 mgmt_name,
                 domain,
                 explicit_server_ip=server_ip,
             )
+            validated_ip = v_ip
+            prevalidated_target = (v_ip, v_mds_ip, v_port, resolve_tls_identity_host(server_ip, v_ip))
 
         auth = await self.resolve_credentials(mgmt_name, domain)
         identity = auth.identity_key
@@ -315,6 +318,7 @@ class LoginCoordinator:
                 domain,
                 auth=auth,
                 explicit_server_ip=server_ip,
+                prevalidated_target=prevalidated_target,
                 read_only=True,
             )
             if tls_identity_host:
@@ -403,6 +407,7 @@ class LoginCoordinator:
         *,
         auth: AuthContext,
         explicit_server_ip: str | None = None,
+        prevalidated_target: tuple[str, str, int, str | None] | None = None,
         session_name: str | None = None,
         session_description: str | None = None,
         read_only: bool = False,
@@ -410,12 +415,15 @@ class LoginCoordinator:
     ) -> tuple[str, str, str | None, str | None]:
         """Authenticate under `LoginGate` and return `(sid, target_ip, session_uid, tls_identity_host)`."""
         dom_key = normalize_domain_key(domain)
-        target_ip, mds_ip, port = await self.resolve_target_ips(
-            mgmt_name,
-            domain,
-            explicit_server_ip=explicit_server_ip,
-        )
-        tls_identity_host = resolve_tls_identity_host(explicit_server_ip, target_ip)
+        if prevalidated_target is not None:
+            target_ip, mds_ip, port, tls_identity_host = prevalidated_target
+        else:
+            target_ip, mds_ip, port = await self.resolve_target_ips(
+                mgmt_name,
+                domain,
+                explicit_server_ip=explicit_server_ip,
+            )
+            tls_identity_host = resolve_tls_identity_host(explicit_server_ip, target_ip)
 
         payload = build_login_payload(
             session_timeout=self._settings.session_timeout,
@@ -675,21 +683,28 @@ class LoginCoordinator:
                 if entry.sid == sid:
                     cached = entry
                     break
-        if cached is None:
-            resolved_identity: str | None = None
+        else:
             try:
                 resolved_identity = (await self.resolve_credentials(mgmt_name, domain)).identity_key
             except Exception:
-                resolved_identity = None
+                return False
             cached = await self._cache.get_sid(mgmt_name, dom_key, auth_identity=resolved_identity)
         target_sid = sid or (cached.sid if cached is not None else None)
         if not target_sid:
             return False
 
         endpoint = self.get_server_endpoint(mgmt_name)
-        raw_target_ip = server_ip or (cached.server_ip if cached is not None else endpoint.host)
+        dedicated_ip = self._active_dedicated_sids.get((mgmt_name, target_sid)) if sid else None
+        dedicated_tls_host = self._dedicated_tls_identity_hosts.get((mgmt_name, target_sid)) if sid else None
+        raw_target_ip = server_ip or (cached.server_ip if cached is not None else dedicated_ip or endpoint.host)
         target_ip, mds_ip, port = await self.resolve_target_ips(mgmt_name, domain, explicit_server_ip=raw_target_ip)
         tls_identity_host = resolve_tls_identity_host(raw_target_ip, target_ip)
+        if (
+            tls_identity_host is None
+            and dedicated_tls_host
+            and (server_ip is None or server_ip in (dedicated_ip, dedicated_tls_host))
+        ):
+            tls_identity_host = resolve_tls_identity_host(dedicated_tls_host, target_ip)
         if (
             tls_identity_host is None
             and cached is not None

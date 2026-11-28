@@ -535,6 +535,18 @@ class ArodonataSettings(BaseSettings):
         le=500000,
         validation_alias=AliasChoices("ARODONATA_MAX_ROUTES_PER_GATEWAY"),
     )
+    max_query_pages: int = Field(
+        default=5000,
+        ge=1,
+        le=100_000,
+        validation_alias=AliasChoices("ARODONATA_MAX_QUERY_PAGES"),
+    )
+    max_query_objects: int = Field(
+        default=1_000_000,
+        ge=1,
+        le=10_000_000,
+        validation_alias=AliasChoices("ARODONATA_MAX_QUERY_OBJECTS"),
+    )
     login_throttle_window: float = Field(
         default=70.0,
         gt=0,
@@ -799,28 +811,20 @@ class ArodonataSettings(BaseSettings):
             return float(budget) + 5.0
         return float(max(self.api_timeout, self.login_timeout)) + 5.0
 
-    def _mask_serialized_dict(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Mask secret fields and database URL passwords in serialized dictionaries."""
-        if "password" in data and data["password"]:
-            data["password"] = REDACTED_PLACEHOLDER
-        if "api_key" in data and data["api_key"]:
-            data["api_key"] = REDACTED_PLACEHOLDER
-        if "api_keys" in data and data["api_keys"]:
-            data["api_keys"] = [REDACTED_PLACEHOLDER for _ in data["api_keys"]]
-        if "database_url" in data and isinstance(data["database_url"], str):
-            data["database_url"] = mask_database_url(data["database_url"])
-        return data
+    @field_serializer("password", "api_key")
+    def _mask_optional_secret(self, value: str | None) -> str | None:
+        """Mask optional string credentials during Pydantic serialization."""
+        return REDACTED_PLACEHOLDER if value else value
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """Serialize settings with secrets and database URL passwords masked."""
-        dumped = super().model_dump(**kwargs)
-        return self._mask_serialized_dict(dumped)
+    @field_serializer("api_keys")
+    def _mask_api_keys(self, value: list[str]) -> list[str]:
+        """Mask configured API keys during Pydantic serialization."""
+        return [REDACTED_PLACEHOLDER for _ in value] if value else value
 
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Serialize settings to JSON with secrets and database URL passwords masked."""
-        dumped = self.model_dump(**{k: v for k, v in kwargs.items() if k != "indent"})
-        indent = kwargs.get("indent")
-        return json.dumps(dumped, indent=indent, default=str)
+    @field_serializer("database_url")
+    def _mask_database_url_field(self, value: str) -> str:
+        """Mask embedded database URL passwords during Pydantic serialization."""
+        return mask_database_url(value)
 
     def __repr__(self) -> str:
         fields_repr: list[str] = []

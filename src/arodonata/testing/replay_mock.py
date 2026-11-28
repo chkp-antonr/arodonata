@@ -18,7 +18,7 @@ import copy
 from collections import Counter
 from collections.abc import Awaitable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -97,8 +97,13 @@ class FileReplayApiMock(ApiPort):
         self._cli_mock = cli_mock or FileReplayCliMock(self._dataset_dir)
         self.allow_one_time_script: bool = bool(allow_one_time_script)
         self.allow_repository_script: bool = bool(allow_repository_script)
-        self.manage_repository_scripts: str = str(manage_repository_scripts)
+        self._manage_repository_scripts: str = "write"
+        self.manage_repository_scripts = manage_repository_scripts
         self.encode_repository_script_body_base64: bool = bool(encode_repository_script_body_base64)
+        self._initial_allow_one_time_script: bool = self.allow_one_time_script
+        self._initial_allow_repository_script: bool = self.allow_repository_script
+        self._initial_manage_repository_scripts: str = self._manage_repository_scripts
+        self._initial_encode_repository_script_body_base64: bool = self.encode_repository_script_body_base64
 
         initialize_dataset_state(self)
 
@@ -130,6 +135,19 @@ class FileReplayApiMock(ApiPort):
     def cli_mock(self) -> FileReplayCliMock:
         """Associated `FileReplayCliMock` instance."""
         return self._cli_mock
+
+    @property
+    def manage_repository_scripts(self) -> str:
+        """Repository script RBAC mode (`'write'`, `'read'`, or `'none'`)."""
+        return self._manage_repository_scripts
+
+    @manage_repository_scripts.setter
+    def manage_repository_scripts(self, value: str) -> None:
+        valid_modes: Final[frozenset[str]] = frozenset({"write", "read", "none"})
+        clean = str(value).strip()
+        if clean not in valid_modes:
+            raise ValueError(f"Invalid manage_repository_scripts={value!r}: expected one of {sorted(valid_modes)}.")
+        self._manage_repository_scripts = clean
 
     @property
     def manifest(self) -> dict[str, Any]:

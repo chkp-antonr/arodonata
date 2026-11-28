@@ -384,6 +384,8 @@ def dispatch_api_call(
             dom_files=dom_files,
             global_files=global_files,
             wait_for_task=wait_for_task,
+            binding=binding,
+            active_ws=active_ws,
         )
 
     read_res = handle_domain_read_command(

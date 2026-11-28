@@ -9,15 +9,15 @@ Defines the native `asyncio` Check Point Management API HTTPS transport (`AMgmtC
 ### Requirement: Strict Web API Command Name Validation
 
 **ID**: REQ-TRANS-001\
-**Intent**: Block path traversal, query injection, and malformed API commands on the client before opening connections or touching pools.\
+**Intent**: Block path traversal, query injection, and malformed API commands on the client before opening connections, logging in, or touching pools.\
 **Non-goals**: Payload schema validation against Check Point API reference (`REQ-APIREF-004`).
 
-`AMgmtClient` transport execution SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before constructing the request URL, rejecting path traversal sequences, slashes, percent-encoding, whitespace, and uppercase characters.
+`AMgmtClient` transport and `api_call` execution SHALL validate every Check Point Web API command string against `^[a-z0-9]+(-[a-z0-9]+)*$` before `is_readonly_command()` classification, login, or request URL construction, rejecting whitespace, slashes, traversal, percent-encoding, and uppercase characters.
 
 #### Scenario: SCN-TRANS-001-1 — Path traversal or malformed command rejected before network I/O
 
-- **WHEN** a call executes with a command violating `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, or `"SHOW-HOSTS"`)
-- **THEN** the transport SHALL raise `ValidationError` before acquiring a connection or sending any network bytes
+- **WHEN** `AMgmtClient.api_call` or transport execution receives a command violating `^[a-z0-9]+(-[a-z0-9]+)*$` (such as `"show-hosts/../publish"`, `"show-x/%2e%2e/publish"`, `"../../gaia_api/v1.7/run-script"`, `"show-hosts?x=1"`, `" show-hosts "`, or `"SHOW-HOSTS"`)
+- **THEN** the client SHALL raise `ValidationError` immediately before `is_readonly_command()` classification, session login, connection acquisition, or sending any network bytes
 
 ### Requirement: Pre-Request TLS Certificate Fingerprint Verification
 
@@ -65,10 +65,10 @@ The transport SHALL verify the server certificate SHA-256 fingerprint at `host:p
 ### Requirement: Atomic Cross-Process Known-Hosts Persistence and IPv6 Key Normalization
 
 **ID**: REQ-TRANS-003\
-**Intent**: Prevent multi-worker TOFU known-hosts file corruption and support IPv6 literal endpoints reliably.\
+**Intent**: Prevent multi-worker TOFU known-hosts file corruption, enforce owner-only directory/file security, and support IPv6 literal endpoints reliably.\
 **Non-goals**: TLS trust mode policy enforcement (`REQ-TRANS-002`).
 
-TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permission checks using cross-process file locking and atomic read-merge-write, and SHALL normalize RFC-compliant IPv6 `[host]:port` address keys in both `tls_known_hosts.json` and `ARODONATA_TLS_FINGERPRINTS`.
+TLS trust-store persistence SHALL create parent directories with `0700`, reject symlinked trust stores (`S_ISLNK`) and non-sticky group/world-writable parent directories before network I/O, write `tls_known_hosts.json` (`0600`) under cross-process locking atomically, and normalize RFC-compliant IPv6 `[host]:port` keys.
 
 #### Scenario: SCN-TRANS-003-1 — First contact learned in TOFU mode
 
@@ -90,10 +90,10 @@ TLS trust-store persistence SHALL write `tls_known_hosts.json` with `0600` permi
 ### Requirement: Verified Connection Pooling for Read-Only and Session-Scoped Commands
 
 **ID**: REQ-TRANS-004\
-**Intent**: Reduce TLS handshake overhead across sequential read-only and dedicated-session commands without leaking SIDs or violating session-boundary hygiene.\
+**Intent**: Reduce TLS handshake overhead across sequential read-only and dedicated-session commands without leaking SIDs or missing host-key eviction.\
 **Non-goals**: Socket timeout classification (`REQ-TRANS-007`) or task polling (`REQ-TRANS-005`).
 
-The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for up to 10 seconds idle and fewer than 95 requests per socket across read-only `show-*` commands and non-boundary dedicated-session commands (`session_scope`), closing idle sockets before non-pooled commands and never exposing raw `sid`s in pool keys or `repr()`.
+The HTTPS transport SHALL pool fingerprint-verified keep-alive connections keyed by canonicalized `(host, port)` (lowercase DNS, uncompressed-agnostic RFC-5952 IPv6) for up to 10s idle and `< 95` requests, closing matching canonical idle sockets on `close_host`/`close_scope` and non-pooled commands without exposing raw `sid`s.
 
 #### Scenario: SCN-TRANS-004-1 — Consecutive show commands reuse verified keep-alive connection
 
@@ -102,8 +102,8 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 
 #### Scenario: SCN-TRANS-004-2 — Mutating commands and idle connections bypass reuse
 
-- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, or a call after `> 10s` idle runs
-- **THEN** the transport SHALL close matching idle pooled sockets before connecting, send `Connection: close`, and open a fresh TLS-verified connection
+- **WHEN** a session-boundary command (`login`, `logout`, `keepalive`, `publish`, `discard`, `continue-session`, `switch-session`, `take-over-session`, `disconnect`), an un-scoped non-`show-*` command, `close_host`/`close_scope` with mixed-case hostname or equivalent IPv6 spelling (`"2001:0db8::1"` / `"[2001:db8::1]"`), or a call after `> 10s` idle runs
+- **THEN** the transport SHALL canonicalize the host key, close all matching idle pooled sockets before connecting, send `Connection: close`, and open a fresh TLS-verified connection
 
 #### Scenario: SCN-TRANS-004-3 — Sequential commands within a dedicated session reuse session-scoped keep-alive connection
 
@@ -167,12 +167,12 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 **Intent**: Enforce unambiguous failure semantics and never double-execute non-idempotent Check Point commands after bytes leave the socket.\
 **Non-goals**: Timeout budget settings resolution (`REQ-CONFIG-004`).
 
-`AMgmtClient` HTTPS transport SHALL enforce explicit TCP/TLS `connect_timeout` and socket read timeouts on every `/web_api/<command>` call, disable HTTP redirects (`allow_redirects=False`), classify every `TransportError` with `phase` (`"connect"` / `request_sent=False` vs `"read"` / `"post-send"` with `request_sent=True`), and NEVER automatically resend a general API request after `request_sent=True` (except `LoginCoordinator`'s gated single `login` retry under `REQ-SESS-006`).
+`AMgmtClient` HTTPS transport SHALL enforce connect/read timeouts and `max_response_bytes` response-body limits, disable redirects (`allow_redirects=False`), classify `TransportError` (`phase="connect"` / `request_sent=False` before wire send, including `RateLimitTimeoutError`, vs `"read"` / `"post-send"` with `request_sent=True`), and never resend after `request_sent=True`.
 
 #### Scenario: SCN-TRANS-007-1 — Socket connect or handshake timeout
 
-- **WHEN** TCP connect or TLS handshake exceeds `connect_timeout`
-- **THEN** the transport SHALL raise `ApiTimeoutError` (`TimeoutError` subclass) with `phase="connect"`, `request_sent=False`, and the target `host` and `port`
+- **WHEN** TCP connect or TLS handshake exceeds `connect_timeout`, OR local MDS concurrency slot acquisition raises `RateLimitTimeoutError` before any network I/O
+- **THEN** TCP/TLS timeouts SHALL raise `ApiTimeoutError` (`TimeoutError` subclass) with `phase="connect"`, `request_sent=False`, and target `host`/`port`, and `RateLimitTimeoutError` SHALL set `request_sent=False` so callers know no bytes were transmitted
 
 #### Scenario: SCN-TRANS-007-2 — Socket read timeout
 
@@ -193,3 +193,25 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections for u
 
 - **WHEN** a server sends a response whose `Content-Length` header or streamed byte count exceeds `ArodonataSettings.max_response_bytes`
 - **THEN** `ApiTransport` SHALL abort reading at `max_response_bytes + 1` bytes, close the socket without pooling, raise `TransportError` with `phase="read"` (`request_sent=True`), and never automatically resend the request
+
+### Requirement: Atomic Multi-Key TOFU Binding and Cooldown-Safe Login Locking
+
+**ID**: REQ-TRANS-008\
+**Intent**: Eliminate TOFU trust-store poisoning, asymmetric hostname/IP binding gaps, premature read-SID eviction, and distributed login-lock TTL exhaustion under load.\
+**Non-goals**: Replacing SHA-256 fingerprint pinning or altering Check Point server-side throttle limits.
+
+TLS trust verification MUST bind both `(hostname, port)` and `(resolved_ip, port)` atomically before writing TOFU entries to disk. Read timeouts and non-failover connect errors MUST NOT evict healthy cached read-only SIDs, and login rate-limit cooldown waits MUST complete before acquiring the distributed login DB lock.
+
+#### Scenario: SCN-TRANS-008-1 — Atomic multi-key TOFU persistence and symmetric hostname pin binding
+
+- **GIVEN** a `tofu` or `lab-memory` trust store where `(resolved_ip, port)` is already pinned or two workers race on concurrent dual-key TOFU writes
+- **WHEN** a hostname connection verifies a matching or conflicting certificate fingerprint
+- **THEN** a matching fingerprint SHALL bind `(hostname, port)` symmetrically when `identity_host` is present and not yet recorded
+- **AND** conflicting multi-key writes SHALL check all target keys atomically under the trust-store lock so a rejected certificate is never persisted
+
+#### Scenario: SCN-TRANS-008-2 — Read-SID preservation on read timeout and pre-lock cooldown waiting
+
+- **GIVEN** a cached read-only SID experiencing an `ApiTimeoutError` or non-failover `TransportError`, or a queued login facing an active rate-limit cooldown
+- **WHEN** `api_call()` handles the read timeout/connect failure or `LoginGate` acquires a login slot
+- **THEN** healthy cached read-only SIDs SHALL remain cached without premature eviction or orphaned sessions
+- **AND** `LoginGate` SHALL wait out any active in-process cooldown before acquiring the distributed database lock

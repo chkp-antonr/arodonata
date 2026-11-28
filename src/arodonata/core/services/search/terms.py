@@ -8,13 +8,11 @@ from collections.abc import Sequence
 from fnmatch import fnmatchcase
 from typing import Any, Literal
 
+from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
-    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     CacheMode,
-    expand_asset_type,
-    normalize_any_type,
-    normalize_object_type,
+    partition_entity_types,
 )
 from arodonata.core.models.objects import CPObject, GroupMembershipNode, SearchResult
 from arodonata.core.primitives import is_uuid, normalize_str_sequence, object_ipv4_bounds
@@ -223,6 +221,49 @@ def resolve_group_memberships(
     return result
 
 
+def _asset_to_probe_object(asset: Asset) -> CPObject:
+    """Convert an `Asset` to a `CPObject` projection for search-term matching and results."""
+    return CPObject(
+        id=asset.id,
+        object_id=asset.asset_id,
+        uid=asset.uid,
+        name=asset.name,
+        type=asset.type,
+        mgmt_name=asset.mgmt_name,
+        domain_name=asset.domain_name,
+        ipv4_address=asset.ipv4_address,
+        ipv6_address=asset.ipv6_address,
+        comments=asset.comments,
+        color=asset.color,
+        raw_data=asset.raw_data,
+        updated_at=asset.updated_at,
+    )
+
+
+def asset_matches_classified_term(
+    asset: Asset,
+    term: ClassifiedSearchTerm,
+    *,
+    exact_match: bool = False,
+) -> bool:
+    """Return `True` if `asset`'s primary attributes or interface IPv4 addresses match `term`."""
+    probe = _asset_to_probe_object(asset)
+    if matches_classified_term(probe, term, exact_match=exact_match):
+        return True
+    if asset.interfaces:
+        for iface in asset.interfaces:
+            iface_ip = str(iface.get("ipv4-address") or iface.get("ipv4_address") or "").strip()
+            if not iface_ip:
+                continue
+            if matches_classified_term(
+                probe.model_copy(update={"ipv4_address": iface_ip}),
+                term,
+                exact_match=exact_match,
+            ):
+                return True
+    return False
+
+
 async def search_objects_impl(
     svc: Any,
     query: str,
@@ -244,38 +285,14 @@ async def search_objects_impl(
     domain_list = normalize_str_sequence(domains) if domains is not None else None
     want_global = include_global or (domain_list is not None and "Global" in domain_list)
 
-    canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-    raw_non_blank = [str(t).strip() for t in types if str(t).strip()] if types is not None else []
-    obj_types: list[str] | None = None
-    asset_types_lower: set[str] = set()
-    if types is not None and raw_non_blank:
-        obj_types = []
-        for raw_t in raw_non_blank:
-            any_t = normalize_any_type(raw_t)
-            if any_t.lower() in canonical_assets_lower:
-                asset_types_lower.update(t.lower() for t in expand_asset_type(raw_t))
-                if raw_t.lower() == "gateway":
-                    asset_types_lower.update(
-                        {
-                            "simple-gateway",
-                            "simple-cluster",
-                            "vsx-gateway",
-                            "vsx-cluster",
-                            "virtual-system",
-                            "cpmigatewayplain",
-                            "cpmigatewaycluster",
-                            "cpmivsxnetobj",
-                            "cpmivsxclusternetobj",
-                            "cpmivsnetobj",
-                            "cpmivsclusternetobj",
-                        }
-                    )
-            elif not any_t.startswith("service-"):
-                norm_obj_t = normalize_object_type(raw_t)
-                if norm_obj_t and norm_obj_t not in obj_types:
-                    obj_types.append(norm_obj_t)
+    part = partition_entity_types(types, expand_gateway_family=True)
+    if part.is_explicit_empty:
+        return SearchResult(query=query, matches=[], memberships={})
 
-    want_objects = types is None or not raw_non_blank or bool(obj_types)
+    obj_types: list[str] | None = part.object_types if types is not None else None
+    asset_types_lower: set[str] = {t.lower() for t in part.asset_types}
+
+    want_objects = types is None or bool(obj_types)
     want_assets = bool(asset_types_lower)
 
     all_objects: list[CPObject] = []
@@ -342,38 +359,9 @@ async def search_objects_impl(
             key = (asset.mgmt_name, asset.domain_name, asset.uid)
             if key in seen_keys:
                 continue
-            as_obj = CPObject(
-                id=asset.id,
-                object_id=asset.asset_id,
-                uid=asset.uid,
-                name=asset.name,
-                type=asset.type,
-                mgmt_name=asset.mgmt_name,
-                domain_name=asset.domain_name,
-                ipv4_address=asset.ipv4_address,
-                ipv6_address=asset.ipv6_address,
-                comments=asset.comments,
-                color=asset.color,
-                raw_data=asset.raw_data,
-                updated_at=asset.updated_at,
-            )
-            asset_matched = any(
-                matches_classified_term(as_obj, term, exact_match=exact_match) for term in classified_terms
-            )
-            if not asset_matched and asset.interfaces:
-                for iface in asset.interfaces:
-                    iface_ip = str(iface.get("ipv4-address") or iface.get("ipv4_address") or "").strip()
-                    if not iface_ip:
-                        continue
-                    probe_obj = as_obj.model_copy(update={"ipv4_address": iface_ip})
-                    if any(
-                        matches_classified_term(probe_obj, term, exact_match=exact_match) for term in classified_terms
-                    ):
-                        asset_matched = True
-                        break
-            if asset_matched:
+            if any(asset_matches_classified_term(asset, term, exact_match=exact_match) for term in classified_terms):
                 seen_keys.add(key)
-                matched_objects.append(as_obj)
+                matched_objects.append(_asset_to_probe_object(asset))
 
     memberships: dict[str, list[GroupMembershipNode]] = {}
     if max_depth > 0 and matched_objects:

@@ -1632,3 +1632,91 @@ async def test_search_service_group_by_validation_telemetry_range_exact_and_sing
     s._object_service._coordinator = type("C", (), {"_domain_service": _BoomDomSvc()})()  # type: ignore[attr-defined]
     with pytest.raises(ServerIdentityError, match="cert changed"):
         await s.resolve_implicit_domain_mode("m", None, "smart")
+
+
+@pytest.mark.spec("SCN-CACHE-021-3")
+async def test_asset_ip_subnet_query_empty_types_short_circuit_and_partitioning() -> None:
+    """SCN-CACHE-021-3: query_objects(ip_subnet=...) matches Asset primary/interface IPs; types=[] short-circuits."""
+    from arodonata.core.models.common import partition_entity_types
+
+    # 1. Unified type partitioning
+    part = partition_entity_types(["host", "tcp", "gateway", "service-group"])
+    assert part.object_types == ["host"]
+    assert part.service_types == ["service-tcp", "service-group"]
+    assert "simple-gateway" in part.asset_types
+    assert part.is_explicit_empty is False
+
+    empty_part = partition_entity_types(["  ", ""])
+    assert empty_part.is_explicit_empty is True
+
+    # 2. Asset ip_subnet CIDR/range and interface IP matching + types=[] short-circuit
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    lock_port = SqlLockAdapter(db)
+    api = SearchFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    domain_svc = DomainService(settings=settings, api=api, cache=cache, lock_port=lock_port)
+    domain_svc.tracker.mark_refreshed("mds1")
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=lock_port,
+        domain_service=domain_svc,
+    )
+    obj_svc = ObjectService(settings=settings, api=api, cache=cache, coordinator=coord)
+    svc_svc = ServiceCacheService(settings=settings, api=api, cache=cache, coordinator=coord)
+    search_service = SearchService(cache=cache, object_service=obj_svc, service_cache=svc_svc)
+    try:
+        await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d1", name="Corp")])
+        gw = Asset(
+            id="mds1:Corp:gw-1",
+            asset_id="mds1:Corp:gw-edge",
+            uid="gw-1",
+            name="gw-edge",
+            type="simple-gateway",
+            mgmt_name="mds1",
+            domain_name="Corp",
+            ipv4_address="10.10.1.5",
+            interfaces=[{"name": "eth1", "ipv4-address": "192.168.50.1"}],
+        )
+        await cache.replace_domain_assets("mds1", "Corp", [gw])
+
+        # Primary IP CIDR match
+        res_primary = await search_service.query_objects(
+            mgmt_name="mds1",
+            domains=["Corp"],
+            types=["gateway"],
+            ip_subnet="10.10.1.0/24",
+            cache_mode="cache",
+        )
+        assert res_primary["total"] == 1
+        assert res_primary["objects"][0]["name"] == "gw-edge"
+
+        # Interface IP range match
+        res_iface = await search_service.query_objects(
+            mgmt_name="mds1",
+            domains=["Corp"],
+            types=["gateway"],
+            ip_subnet="192.168.50.0-192.168.50.10",
+            cache_mode="cache",
+        )
+        assert res_iface["total"] == 1
+
+        # Explicit types=[] / [" "] returns zero matches and performs zero API calls
+        api_calls: list[str] = []
+        orig_api_call = api.api_call
+
+        async def _tracking_call(mgmt_name: str, command: str, *args: Any, **kwargs: Any) -> Any:
+            api_calls.append(command)
+            return await orig_api_call(mgmt_name, command, *args, **kwargs)
+
+        api.api_call = _tracking_call  # type: ignore[method-assign]
+        empty_search = await search_service.search_objects("10.10.1.5", mgmt_name="mds1", types=[], cache_mode="smart")
+        assert empty_search.matches == []
+        empty_query = await search_service.query_objects(mgmt_name="mds1", types=["  "], cache_mode="smart")
+        assert empty_query["total"] == 0
+        assert api_calls == []
+    finally:
+        await db.close()

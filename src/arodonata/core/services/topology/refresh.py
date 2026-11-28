@@ -222,8 +222,12 @@ async def _stream_targeted_gateway_refresh(
     for dom in target_domains:
         dom_label = f"{dom.mgmt_name}:{dom.name}"
         try:
+            if mode == "cache":
+                skipped_domains.append(dom_label)
+                continue
+
             domain_assets = await cache.get_assets(mgmt_name=dom.mgmt_name, domain_name=dom.name)
-            if not domain_assets and mode != "cache":
+            if not domain_assets:
                 domain_assets = await asset_service.get_assets(
                     mgmt_name=dom.mgmt_name,
                     domain=dom.name,
@@ -247,15 +251,15 @@ async def _stream_targeted_gateway_refresh(
             )
 
             refreshed_gw_map: dict[str, Asset] = {}
-            if mode != "cache":
-                # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
-                for gw_asset in matched_gateways:
-                    enriched = await _fetch_asset_detail_on_demand(api, dom.mgmt_name, dom.name, gw_asset)
-                    if enriched is not None:
-                        refreshed_gw_map[enriched.uid] = enriched
-                if refreshed_gw_map:
-                    await cache.upsert_assets(list(refreshed_gw_map.values()))
-                    domain_assets = [refreshed_gw_map.get(a.uid, a) for a in domain_assets]
+            await coordinator.verify_session_clean(dom.mgmt_name, dom.name)
+            # Force on-demand detail fetch for each targeted gateway so modified interface definitions are pulled
+            for gw_asset in matched_gateways:
+                enriched = await _fetch_asset_detail_on_demand(api, dom.mgmt_name, dom.name, gw_asset)
+                if enriched is not None:
+                    refreshed_gw_map[enriched.uid] = enriched
+            if refreshed_gw_map:
+                await cache.upsert_assets(list(refreshed_gw_map.values()))
+                domain_assets = [refreshed_gw_map.get(a.uid, a) for a in domain_assets]
 
             all_objects = await _load_domain_scoped_objects(
                 cache,
@@ -263,22 +267,19 @@ async def _stream_targeted_gateway_refresh(
                 dom.name,
                 global_cache=global_obj_cache,
                 global_lock=global_obj_lock,
+                apply_overlay=False,
             )
-            trusted_domains = (
-                await _compute_trusted_object_domains(
-                    cache,
-                    coordinator,
-                    dom.mgmt_name,
-                    dom.name,
-                    dom_info=dom,
-                    mode=mode,
-                    cache_ttl=cache_ttl,
-                    force_object_refresh=(mode == "force"),
-                    global_trusted_cache=global_trusted_cache,
-                    global_lock=global_obj_lock,
-                )
-                if mode != "cache"
-                else None
+            trusted_domains = await _compute_trusted_object_domains(
+                cache,
+                coordinator,
+                dom.mgmt_name,
+                dom.name,
+                dom_info=dom,
+                mode=mode,
+                cache_ttl=cache_ttl,
+                force_object_refresh=(mode == "force"),
+                global_trusted_cache=global_trusted_cache,
+                global_lock=global_obj_lock,
             )
 
             target_gw_uids = [g.uid for g in matched_gateways]
@@ -292,12 +293,13 @@ async def _stream_targeted_gateway_refresh(
                 assets=domain_assets,
                 objects=all_objects,
                 target_gateway_uids=set(target_gw_uids),
-                allow_live_detail=mode != "cache",
+                allow_live_detail=True,
                 force_object_refresh=(mode == "force"),
                 trusted_object_domains=trusted_domains,
                 already_detailed_uids=set(refreshed_gw_map),
                 global_cache=global_obj_cache,
                 global_lock=global_obj_lock,
+                apply_overlay=False,
             )
             if updated_assets:
                 await cache.upsert_assets(updated_assets)
@@ -309,7 +311,7 @@ async def _stream_targeted_gateway_refresh(
                 gateway_uids=target_gw_uids,
                 source_types=list(STATIC_TOPOLOGY_SOURCES),
             )
-            if collect_routes and mode != "cache":
+            if collect_routes:
                 route_outcome = await collect_routes_fn(
                     mgmt_name=dom.mgmt_name,
                     domain=dom.name,
@@ -632,6 +634,7 @@ async def refresh_topology(
         tuple(sorted(set(normalize_str_sequence(domains)))) if domains is not None else None
     )
 
+    eff_ttl = float(cache_ttl) if cache_ttl is not None else float(settings.cache_ttl)
     can_coalesce = get_write_session() is None
     flight_key = (
         mgmt_name or "",
@@ -640,6 +643,7 @@ async def refresh_topology(
         bool(collect_routes),
         bool(include_global),
         mode,
+        eff_ttl,
         eff_script_mode,
         eff_script_name,
         id(repository_script_args_fn) if repository_script_args_fn is not None else None,

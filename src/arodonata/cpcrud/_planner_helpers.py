@@ -27,6 +27,7 @@ from arodonata.cpcrud.rule_identity import (
     build_effective_obj_dict,
     deref_rule_list,
     normalize_nat_traffic_ref,
+    normalize_operation_verb,
     normalize_traffic_list,
     rule_spec_has_delta_mapping,
 )
@@ -98,27 +99,8 @@ def _make_error_action(
 
 
 def _normalize_verb(spec: Mapping[str, Any], *, is_rule: bool = False) -> str:
-    """Resolve the desired operation verb (`present` / `add`, `set` / `update`, `absent` / `delete`)."""
-    raw_op = spec.get("operation") or spec.get("state")
-    if raw_op is None and not is_rule:
-        raw_op = spec.get("action")
-    elif raw_op is None and is_rule:
-        cand = spec.get("action")
-        if isinstance(cand, str) and cand.strip().lower() in (
-            "present",
-            "absent",
-            "add",
-            "set",
-            "update",
-            "delete",
-        ):
-            raw_op = cand
-    verb = str(raw_op or "present").strip().lower()
-    if verb in ("absent", "delete"):
-        return "delete"
-    if verb in ("set", "update"):
-        return "set"
-    return "present"
+    """Resolve the desired operation verb (`present`, `set`, `delete`)."""
+    return normalize_operation_verb(spec, is_rule=is_rule)
 
 
 def _resolve_rulebase_type(spec: Mapping[str, Any]) -> tuple[RulebaseType, str]:
@@ -526,7 +508,9 @@ def _build_add_service_payload(
     payload: dict[str, Any] = {"name": name}
     if spec.get("port") is not None:
         payload["port"] = str(spec["port"]).strip()
-    proto = spec.get("protocol") or spec.get("ip_protocol") or spec.get("ip-protocol")
+    proto = next(
+        (spec[k] for k in ("protocol", "ip_protocol", "ip-protocol") if k in spec and spec[k] is not None), None
+    )
     if proto is not None:
         payload["ip-protocol" if svc_type == "service-other" else "protocol"] = proto
     icmp_t = spec.get("icmp_type") if "icmp_type" in spec else spec.get("icmp-type")
@@ -622,9 +606,10 @@ def _build_add_rule_payload(
                 neg_v = spec.get(snake_k) if snake_k in spec else spec.get(kebab_k)
                 if neg_v is not None:
                     payload[kebab_k] = bool(neg_v)
-        inline_val = spec.get("inline_layer") or spec.get("inline-layer")
-        if isinstance(inline_val, str) and inline_val.strip():
-            payload["inline-layer"] = inline_val.strip()
+        if rb_type == "access":
+            inline_val = spec.get("inline_layer") if "inline_layer" in spec else spec.get("inline-layer")
+            if isinstance(inline_val, str) and inline_val.strip():
+                payload["inline-layer"] = inline_val.strip()
         sc_val = spec.get("site_category") if "site_category" in spec else spec.get("site-category")
         if sc_val is not None:
             validate_non_blank_rule_items("site-category", sc_val)

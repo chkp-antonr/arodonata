@@ -168,10 +168,12 @@ def reset_mock_state(mock: FileReplayApiMock) -> None:
     mock._ts_seq = 1794300000000
     mock._cli_mock._cli_overrides.clear()
     mock._cli_mock.fail_ssh_nodes = set(mock._cli_mock._initial_fail_ssh_nodes)
-    mock.allow_one_time_script = True
-    mock.allow_repository_script = True
-    mock.manage_repository_scripts = "write"
-    mock.encode_repository_script_body_base64 = False
+    mock.allow_one_time_script = bool(getattr(mock, "_initial_allow_one_time_script", True))
+    mock.allow_repository_script = bool(getattr(mock, "_initial_allow_repository_script", True))
+    mock.manage_repository_scripts = str(getattr(mock, "_initial_manage_repository_scripts", "write"))
+    mock.encode_repository_script_body_base64 = bool(
+        getattr(mock, "_initial_encode_repository_script_body_base64", False)
+    )
     mock.reset_counters()
 
 

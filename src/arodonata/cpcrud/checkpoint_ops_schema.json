@@ -305,7 +305,9 @@
       "required": ["type"],
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
         },
         "action": {
           "$ref": "#/definitions/ActionVerb"
@@ -582,7 +584,9 @@
       "required": ["type"],
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
         },
         "action": {
           "$ref": "#/definitions/ActionVerb"
@@ -830,7 +834,9 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
         },
         "action": {
           "$ref": "#/definitions/ActionVerb"
@@ -978,7 +984,9 @@
       "additionalProperties": false,
       "properties": {
         "id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
         },
         "action": {
           "type": "string"

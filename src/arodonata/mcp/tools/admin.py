@@ -245,6 +245,30 @@ def register_admin_tools(
                 validated_dom_cache[key] = res_d
             return res_d
 
+        all_session_uids: set[str] = set()
+        if session_uids:
+            all_session_uids.update(s.strip() for s in session_uids if isinstance(s, str) and s.strip())
+        if scopes:
+            for raw_sc in scopes:
+                if isinstance(raw_sc, dict) and isinstance(raw_sc.get("session_uids"), list):
+                    all_session_uids.update(
+                        s.strip() for s in raw_sc["session_uids"] if isinstance(s, str) and s.strip()
+                    )
+        if len(all_session_uids) > 50:
+            raise ToolFailure(
+                f"change_report supports at most 50 unique session_uids per request (got {len(all_session_uids)}).",
+                mgmt_name=eff_mgmt,
+                domain=domain.strip() if domain and domain.strip() else None,
+            )
+
+        eff_quota_cost = max(len(scopes or []), len(all_session_uids))
+        if eff_quota_cost > 1:
+            consume_live_quota_if_needed(cost=eff_quota_cost)
+
+        _allowed_scope_keys = frozenset(
+            {"mgmt_name", "domain", "session_uids", "from_date", "to_date", "from_session", "to_session"}
+        )
+
         parsed_scopes: list[ReportScope | dict[str, Any]] = []
         if scopes:
             if len(scopes) > 20:
@@ -253,13 +277,11 @@ def register_admin_tools(
                     mgmt_name=eff_mgmt,
                     domain=domain.strip() if domain and domain.strip() else None,
                 )
-            if len(scopes) > 1:
-                consume_live_quota_if_needed(cost=len(scopes))
             eff_domain = await _validate_dom_once(eff_mgmt, domain)
             for raw_sc in scopes:
                 sc_mgmt = resolve_mgmt_name(client, raw_sc.get("mgmt_name") or eff_mgmt)
                 sc_dom = await _validate_dom_once(sc_mgmt, raw_sc.get("domain") or eff_domain)
-                sc_copy = dict(raw_sc)
+                sc_copy = {k: v for k, v in raw_sc.items() if k in _allowed_scope_keys}
                 sc_copy["mgmt_name"] = sc_mgmt
                 sc_copy["domain"] = sc_dom
                 for date_field in ("from_date", "to_date"):
@@ -333,8 +355,8 @@ def register_admin_tools(
         name="api_call",
         description=(
             "Execute a direct Check Point Management Web API command (e.g. 'where-used', 'show-sessions', "
-            "'show-unused-objects', 'show-task', 'verify-policy'). By default only read-only commands "
-            "('show-*', 'where-used', 'verify-policy') are permitted unless ARODONATA_MCP_ALLOW_WRITE_API=true."
+            "'show-unused-objects', 'show-task'). By default only read-only commands "
+            "('show-*', 'where-used', 'keepalive') are permitted unless ARODONATA_MCP_ALLOW_WRITE_API=true."
         ),
     )
     @mcp_tool_guard("api_call", client_getter, quota_manager=quota_manager, is_live_tool=True)
@@ -357,7 +379,7 @@ def register_admin_tools(
         if not mcp_settings.allow_write_api and not is_readonly_command(clean_cmd):
             raise ToolFailure(
                 f"Write or non-read-only command {clean_cmd!r} is prohibited when "
-                "ARODONATA_MCP_ALLOW_WRITE_API=false. Only read-only 'show-*', 'where-used', and 'verify-policy' "
+                "ARODONATA_MCP_ALLOW_WRITE_API=false. Only read-only 'show-*', 'where-used', and 'keepalive' "
                 "commands are permitted."
             )
 

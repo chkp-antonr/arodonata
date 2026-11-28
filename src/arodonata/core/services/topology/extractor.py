@@ -46,6 +46,7 @@ from arodonata.core.services.topology.objects import (
     _fetch_asset_detail_on_demand,
     _index_objects,
     _load_domain_scoped_objects,
+    _lookup_indexed_object,
     _resolve_topology_objects_on_demand,
 )
 from arodonata.core.services.topology.policy_rules import (
@@ -269,8 +270,11 @@ async def _prepare_domain_gateways(
             for nif in norm_ifs:
                 has_untrusted_cached = False
                 if not force_object_refresh and nif.specific_inline_cidr and trusted_object_domains is not None:
-                    cached_spec = (pre_by_uid.get(nif.specific_network_uid) if nif.specific_network_uid else None) or (
-                        pre_by_name.get(nif.specific_network_ref) if nif.specific_network_ref else None
+                    cached_spec = _lookup_indexed_object(
+                        nif.specific_network_uid,
+                        nif.specific_network_ref,
+                        pre_by_uid,
+                        pre_by_name,
                     )
                     if cached_spec is not None and cached_spec.domain_name not in trusted_object_domains:
                         has_untrusted_cached = True
@@ -584,6 +588,7 @@ async def _extract_domain_topology_entries(
     already_detailed_uids: set[str] | None = None,
     global_cache: dict[str, list[CPObject]] | None = None,
     global_lock: asyncio.Lock | None = None,
+    apply_overlay: bool = True,
     emit: Callable[[SyncProgressEvent], Awaitable[None]] | None = None,
 ) -> tuple[list[GatewayTopologyEntry], list[Asset]]:
     """Extract `GatewayTopologyEntry` rows for all policy-enforcing gateways in `(mgmt_name, domain_name)`."""
@@ -629,6 +634,7 @@ async def _extract_domain_topology_entries(
             trusted_object_domains=trusted_object_domains,
             global_cache=global_cache,
             global_lock=global_lock,
+            apply_overlay=apply_overlay,
         )
 
     obj_by_uid, obj_by_name = _index_objects(eff_objects, domain_name=domain_name)
@@ -747,6 +753,7 @@ async def _sync_domain_topology(
         dom_name,
         global_cache=global_cache,
         global_lock=global_lock,
+        apply_overlay=False,
     )
     trusted_domains = await _compute_trusted_object_domains(
         cache,
@@ -773,6 +780,7 @@ async def _sync_domain_topology(
         trusted_object_domains=trusted_domains,
         global_cache=global_cache,
         global_lock=global_lock,
+        apply_overlay=False,
         emit=emit,
     )
     if updated_assets:

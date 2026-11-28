@@ -5,14 +5,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
-from arodonata.core.errors import REDACTED_PLACEHOLDER, MissingConfigurationError, SessionError, is_sensitive_key
+from arodonata.core.errors import (
+    REDACTED_PLACEHOLDER,
+    MissingConfigurationError,
+    ServerIdentityError,
+    SessionError,
+    TransportError,
+    is_sensitive_key,
+    redact_sid,
+)
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
@@ -540,6 +548,16 @@ def write_session_context(session: WriteSession) -> Iterator[WriteSession]:
         _current_write_session.reset(token)
 
 
+async def shielded_best_effort(awaitable: Awaitable[Any]) -> None:
+    """Await a cleanup coroutine under `asyncio.shield`, propagating cancellation and TLS identity failures."""
+    try:
+        await asyncio.shield(awaitable)
+    except ServerIdentityError:
+        raise
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def run_write_session_lifecycle(
     ws: WriteSession,
@@ -559,34 +577,37 @@ async def run_write_session_lifecycle(
                 yield ws
             except BaseException:
                 if not ws.discarded and not ws.published:
-                    with suppress(BaseException):
-                        await asyncio.shield(
-                            api_call_fn(
-                                mgmt_name,
-                                "discard",
-                                {},
-                                domain=domain,
-                                sid=ws.sid,
-                                server_ip=ws.server_ip,
-                            )
+                    await shielded_best_effort(
+                        api_call_fn(
+                            mgmt_name,
+                            "discard",
+                            {},
+                            domain=domain,
+                            sid=ws.sid,
+                            server_ip=ws.server_ip,
                         )
+                    )
                     ws.discarded = True
                     ws.overlay.clear()
                 raise
 
             if publish_on_exit and not ws.published and not ws.discarded:
-                pub_res = await api_call_fn(
-                    mgmt_name,
-                    "publish",
-                    {},
-                    domain=domain,
-                    sid=ws.sid,
-                    server_ip=ws.server_ip,
-                    wait_for_task=True,
-                )
-                if not pub_res.success:
-                    with suppress(BaseException):
-                        await asyncio.shield(
+                try:
+                    pub_res = await api_call_fn(
+                        mgmt_name,
+                        "publish",
+                        {},
+                        domain=domain,
+                        sid=ws.sid,
+                        server_ip=ws.server_ip,
+                        wait_for_task=True,
+                    )
+                except BaseException as pub_exc:
+                    should_discard = isinstance(pub_exc, asyncio.CancelledError) or (
+                        isinstance(pub_exc, TransportError) and not pub_exc.request_sent
+                    )
+                    if should_discard and not ws.discarded and not ws.published:
+                        await shielded_best_effort(
                             api_call_fn(
                                 mgmt_name,
                                 "discard",
@@ -596,6 +617,20 @@ async def run_write_session_lifecycle(
                                 server_ip=ws.server_ip,
                             )
                         )
+                        ws.discarded = True
+                        ws.overlay.clear()
+                    raise
+                if not pub_res.success:
+                    await shielded_best_effort(
+                        api_call_fn(
+                            mgmt_name,
+                            "discard",
+                            {},
+                            domain=domain,
+                            sid=ws.sid,
+                            server_ip=ws.server_ip,
+                        )
+                    )
                     ws.discarded = True
                     ws.overlay.clear()
                     raise SessionError(
@@ -609,8 +644,7 @@ async def run_write_session_lifecycle(
                     on_domain_invalidated(mgmt_name, domain)
     finally:
         ws.overlay.clear()
-        with suppress(BaseException):
-            await asyncio.shield(logout_fn(mgmt_name, ws.sid, server_ip=ws.server_ip))
+        await shielded_best_effort(logout_fn(mgmt_name, ws.sid, server_ip=ws.server_ip))
 
 
 @asynccontextmanager
@@ -660,6 +694,19 @@ async def open_api_write_session(
         yield bound_ws
 
 
+def _sanitize_overlay_value(val: Any) -> Any:
+    """Recursively omit sensitive mapping keys and redact SIDs in overlay payloads."""
+    if isinstance(val, Mapping):
+        return {k: _sanitize_overlay_value(v) for k, v in val.items() if not is_sensitive_key(str(k))}
+    if isinstance(val, list):
+        return [_sanitize_overlay_value(item) for item in val]
+    if isinstance(val, tuple):
+        return tuple(_sanitize_overlay_value(item) for item in val)
+    if isinstance(val, str):
+        return redact_sid(val)
+    return val
+
+
 def update_overlay_from_command(
     overlay: SessionOverlay,
     command: str,
@@ -682,10 +729,12 @@ def update_overlay_from_command(
     resp_data = result.data if isinstance(result.data, dict) else {}
 
     if verb in ("add", "set"):
-        merged_raw = {k: v for k, v in req_data.items() if not is_sensitive_key(k)}
-        for k, v in resp_data.items():
-            if not is_sensitive_key(k):
-                merged_raw[k] = v
+        clean_req = _sanitize_overlay_value(req_data)
+        clean_resp = _sanitize_overlay_value(resp_data)
+        merged_raw: dict[str, Any] = {
+            **(clean_req if isinstance(clean_req, dict) else {}),
+            **(clean_resp if isinstance(clean_resp, dict) else {}),
+        }
         if "type" not in merged_raw or not merged_raw.get("type"):
             merged_raw["type"] = target_type
         uid = str(merged_raw.get("uid") or "")

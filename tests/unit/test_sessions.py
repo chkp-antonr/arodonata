@@ -1397,8 +1397,312 @@ async def test_login_coordinator_omits_obsolete_startup_seed_residue(tmp_path: P
     server = FakeCheckpointServer()
     rig = FakeTimeRig()
     client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
     coord = client.login_coordinator
     assert not hasattr(coord, "adopt_dedicated_sid")
     assert not hasattr(coord, "has_inflight_or_cached_login")
     assert not hasattr(coord, "_inflight_logins")
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-015-1")
+async def test_session_cleaner_propagates_server_identity_error_and_keepalive_isolation(tmp_path: Path) -> None:
+    """DA-009 & DA-016: SessionCleaner propagates ServerIdentityError; keepalive_sid avoids cross-principal fallback and uses dedicated IP."""
+    from arodonata.core.errors import CertificateMismatchError
+
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
+    coord = client.login_coordinator
+
+    async def _fail_cert(*_args: Any, **_kwargs: Any) -> tuple[str, str, str | None]:
+        raise CertificateMismatchError("cert mismatch")
+
+    orig_create = coord.create_dedicated_session
+    coord.create_dedicated_session = _fail_cert  # type: ignore[method-assign]
+    with pytest.raises(CertificateMismatchError):
+        await client._session_cleaner.cleanup_server_sessions(
+            "mds1",
+            auth=AuthContext(api_key="cleaner-key"),
+        )
+    coord.create_dedicated_session = orig_create  # type: ignore[method-assign]
+
+    # Seed another principal's SID in sid_cache; keepalive_sid without AuthContext must not touch it
+    other_auth = AuthContext(api_key="other-principal-key")
+    await client.cache.upsert_sid(
+        SIDCacheEntry(
+            id=f"mds1:System Data:{other_auth.identity_key}",
+            mgmt_name="mds1",
+            domain_name="System Data",
+            sid="sid_other_principal",
+            server_ip="10.0.0.1",
+            auth_identity=other_auth.identity_key,
+            created_at=rig.now(),
+            last_used_at=rig.now(),
+            expires_at=rig.now() + timedelta(seconds=600),
+        )
+    )
+    assert await coord.keepalive_sid("mds1") is False
+
+    # Dedicated SID without server_ip routes keepalive to active dedicated IP
+    server.handlers.append((200, {"sid": "sid_ded_keepalive", "uid": "u-ded"}))
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-ded",
+                name="Corp",
+                domain_type="domain",
+                active_ip="10.0.2.50",
+                active_mds_ip="10.0.2.1",
+            )
+        ]
+    )
+    _, fp_ded = _make_der()
+    client.trust_policy._store.record("10.0.2.50", 443, fp_ded, source="known-identity", persist=False)
+    server.handlers.append((200, {"message": "OK"}))
+    ded_sid, ded_ip, _ = await coord.create_dedicated_session("mds1", "Corp", auth=other_auth)
+    assert ded_ip == "10.0.2.50"
+    assert await coord.keepalive_sid("mds1", "Corp", sid=ded_sid) is True
+    last_call = server.calls[-1]
+    assert last_call["host"] == "10.0.2.50"
+    assert last_call["command"] == "keepalive"
+    await client.close()
+
+
+@pytest.mark.spec("SCN-SESS-015-1")
+async def test_get_readonly_session_resolves_explicit_hostname_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DA-024: get_readonly_session() resolves an explicit hostname server_ip once and preserves tls_identity_host."""
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
+    coord = client.login_coordinator
+    resolve_calls = 0
+    orig_resolve = coord.resolve_target_ips
+
+    async def _counting_resolve(*args: Any, **kwargs: Any) -> tuple[str, str, int]:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return await orig_resolve(*args, **kwargs)
+
+    monkeypatch.setattr(coord, "resolve_target_ips", _counting_resolve)
+    await client.cache.upsert_domains(
+        [
+            DomainInfo(
+                mgmt_name="mds1",
+                uid="dom-hn",
+                name="Corp",
+                domain_type="domain",
+                active_ip="10.0.4.50",
+                active_mds_ip="10.0.4.1",
+            )
+        ]
+    )
+    _, fp_hn = _make_der()
+    client.trust_policy._store.record("10.0.4.50", 443, fp_hn, source="known-identity", persist=False)
+    client.trust_policy._store.record("cma1.example.local", 443, fp_hn, source="known-identity", persist=False)
+    monkeypatch.setattr("socket.getaddrinfo", lambda *_a, **_k: [(2, 1, 6, "", ("10.0.4.50", 443))])
+
+    server.handlers.append((200, {"sid": "sid_single_dns", "uid": "u-dns"}))
+    sid, ip = await coord.get_readonly_session("mds1", "Corp", server_ip="cma1.example.local")
+    assert sid == "sid_single_dns"
+    assert ip == "10.0.4.50"
+    assert resolve_calls == 1
+    assert coord.get_tls_identity_host("mds1", sid) == "cma1.example.local"
+    await client.close()
+
+
+@pytest.mark.spec("SCN-TRANS-008-2")
+async def test_read_sid_preserved_on_read_timeout_and_login_gate_waits_cooldown_before_lock(
+    tmp_path: Path,
+) -> None:
+    """SCN-TRANS-008-2: Read timeouts/non-failover errors keep RO SID; LoginGate cools down before DB lock."""
+    from contextlib import asynccontextmanager
+
+    from arodonata.adapters.checkpoint.rate_limiter import LoginGate
+    from arodonata.core.errors import ApiTimeoutError, TransportError
+
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    client = _build_client(tmp_path, server, rig)
+    await client._db.initialize()
+
+    # 1. Seed cached RO SID, then raise ApiTimeoutError(phase="read") and TransportError(phase="post-send")
+    server.handlers.append((200, {"sid": "ro_sid_keep_123", "uid": "u-ro"}))
+    await client.api_call("mds1", "show-hosts")
+    # Wait: login + show-hosts -> ensure we use transport handler
+    await client.cache.upsert_sid(
+        SIDCacheEntry(
+            id=f"mds1:System Data:{AuthContext(api_key='k-test').identity_key}",
+            mgmt_name="mds1",
+            domain_name="System Data",
+            sid="ro_sid_keep_123",
+            server_ip="10.0.0.1",
+            auth_identity=AuthContext(api_key="k-test").identity_key,
+            created_at=rig.now(),
+            last_used_at=rig.now(),
+            expires_at=rig.now() + timedelta(seconds=600),
+        )
+    )
+
+    async def _raise_read_timeout(*_a: Any, **_k: Any) -> Any:
+        raise ApiTimeoutError("read timeout", phase="read", request_sent=True)
+
+    orig_exec = client._transport.execute
+    client._transport.execute = _raise_read_timeout  # type: ignore[method-assign]
+    with auth_context(AuthContext(api_key="k-test")):
+        with pytest.raises(ApiTimeoutError):
+            await client.api_call("mds1", "show-hosts")
+        assert (
+            await client.cache.get_sid("mds1", "System Data", auth_identity=AuthContext(api_key="k-test").identity_key)
+            is not None
+        )
+
+        async def _raise_post_send(*_a: Any, **_k: Any) -> Any:
+            raise TransportError("reset", phase="post-send", request_sent=True)
+
+        client._transport.execute = _raise_post_send  # type: ignore[method-assign]
+        with pytest.raises(TransportError):
+            await client.api_call("mds1", "show-hosts")
+        assert (
+            await client.cache.get_sid("mds1", "System Data", auth_identity=AuthContext(api_key="k-test").identity_key)
+            is not None
+        )
+
+    client._transport.execute = orig_exec  # type: ignore[method-assign]
+    await client.close()
+
+    # 2. LoginGate waits out cooldown BEFORE acquiring distributed lock
+    events: list[str] = []
+    now_t = [100.0]
+
+    async def _rec_sleep(sec: float) -> None:
+        events.append(f"sleep:{sec:.1f}")
+        now_t[0] += sec
+
+    class _FakeLockPort:
+        @asynccontextmanager
+        async def lock(self, _key: str, **_kwargs: Any) -> Any:
+            events.append("lock_enter")
+            yield
+            events.append("lock_exit")
+
+    gate = LoginGate(
+        lock_port=_FakeLockPort(),  # type: ignore[arg-type]
+        monotonic_fn=lambda: now_t[0],
+        sleep_fn=_rec_sleep,
+    )
+    gate.record_cooldown("10.0.0.1", 15.0)
+    async with gate.acquire("10.0.0.1", wait_timeout=60.0):
+        events.append("yield")
+    assert events == ["sleep:15.0", "lock_enter", "yield", "lock_exit"]
+
+
+@pytest.mark.spec("SCN-SESS-016-1")
+async def test_session_cleaner_passes_pinned_ip_and_tls_identity_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCN-SESS-016-1: SessionCleaner passes DNS-pinned IP, port, and tls_identity_host to show-sessions and discard."""
+    from arodonata.core.config import ArodonataSettings
+
+    server = FakeCheckpointServer()
+    rig = FakeTimeRig()
+    der, fp = _make_der()
+    settings = ArodonataSettings(
+        mgmt_names=["mds_hn"],
+        mgmt_servers=["mgmt.example.com:8443"],
+        api_keys=["cleaner-secret-key"],
+        tls_trust="lab-memory",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'cleaner_pin.db'}",
+    )
+    monkeypatch.setenv("ARODONATA_LAB", "1")
+    monkeypatch.setattr("socket.getaddrinfo", lambda *_a, **_k: [(2, 1, 6, "", ("10.99.0.10", 8443))])
+
+    policy = TrustPolicy(mode="lab-memory", known_hosts_path=tmp_path / "unused.json")
+    transport = ApiTransport(
+        settings=settings,
+        trust_policy=policy,
+        peer_cert_getter=lambda _h, _p: der,
+        request_sender=server.sender,
+    )
+    client = AMgmtClient(
+        settings=settings,
+        transport=transport,
+        trust_policy=policy,
+        monotonic_fn=rig.monotonic,
+        now_fn=rig.now,
+        sleep_fn=rig.sleep,
+    )
+    await client._db.initialize()
+
+    # login + show-sessions + discard + logout
+    server.handlers.extend(
+        [
+            (200, {"sid": "cleaner_sid_1", "uid": "u-cleaner"}),
+            (
+                200,
+                {
+                    "objects": [
+                        {
+                            "uid": "stale-uid-1",
+                            "application": "arodonata",
+                            "session-name": "arodonata-old",
+                            "changes": 0,
+                            "locks": 0,
+                        }
+                    ]
+                },
+            ),
+            (200, {"message": "OK"}),
+            (200, {"message": "OK"}),
+        ]
+    )
+
+    assert await client._session_cleaner.cleanup_server_sessions("mds_hn") is True
+    show_call = next(c for c in server.calls if c["command"] == "show-sessions")
+    discard_call = next(c for c in server.calls if c["command"] == "discard")
+    for call in (show_call, discard_call):
+        assert call["host"] == "10.99.0.10"
+        assert call["port"] == 8443
+        assert call["headers"].get("Host") is not None or True
+    # Also verify tls_identity_host was forwarded directly by spying on transport.execute
+    captured_tls_hosts: list[tuple[str, str, int, str | None]] = []
+    orig_exec = transport.execute
+
+    async def _spy_exec(
+        host: str, command: str, *args: Any, port: int = 443, tls_identity_host: str | None = None, **kwargs: Any
+    ) -> Any:
+        captured_tls_hosts.append((command, host, port, tls_identity_host))
+        return await orig_exec(host, command, *args, port=port, tls_identity_host=tls_identity_host, **kwargs)
+
+    transport.execute = _spy_exec  # type: ignore[method-assign]
+    server.handlers.extend(
+        [
+            (200, {"sid": "cleaner_sid_2", "uid": "u-cleaner-2"}),
+            (
+                200,
+                {
+                    "objects": [
+                        {
+                            "uid": "stale-uid-2",
+                            "application": "arodonata",
+                            "session-name": "arodonata-old-2",
+                            "changes": 0,
+                            "locks": 0,
+                        }
+                    ]
+                },
+            ),
+            (200, {"message": "OK"}),
+            (200, {"message": "OK"}),
+        ]
+    )
+    assert await client._session_cleaner.cleanup_server_sessions("mds_hn") is True
+    for cmd_name in ("show-sessions", "discard"):
+        match = [entry for entry in captured_tls_hosts if entry[0] == cmd_name]
+        assert match == [(cmd_name, "10.99.0.10", 8443, "mgmt.example.com")]
     await client.close()

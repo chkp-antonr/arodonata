@@ -70,6 +70,14 @@ def _open_reconcile_lock(provider: Any, key: str) -> Any:
         return provider.lock(key)
 
 
+def _normalize_classification_filter(values: Sequence[str] | str | None) -> set[str] | None:
+    """Normalize optional `roles` / `platforms` filter inputs into a lowercase underscore set."""
+    if values is None:
+        return None
+    items = [values] if isinstance(values, str) else list(values)
+    return {str(v).strip().lower().replace("-", "_") for v in items if str(v or "").strip()}
+
+
 class AssetRefreshService:
     """Synchronizes and queries cached gateway, cluster, VSX, and management server assets (`assets`)."""
 
@@ -116,9 +124,40 @@ class AssetRefreshService:
                 all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
                 if not all_assets:
                     return
+                orig_by_id = {a.id: a for a in all_assets}
                 modified = self._vsx_manager.reconcile_cross_domain(all_assets)
                 if modified:
-                    await self._cache.upsert_assets(modified)
+                    updater = getattr(self._cache, "update_assets_vsx_links", None)
+                    if callable(updater):
+                        patches: list[tuple[str, datetime, dict[str, Any]]] = []
+                        for upd in modified:
+                            orig = orig_by_id.get(upd.id)
+                            if orig is None:
+                                continue
+                            changed_cols: dict[str, Any] = {}
+                            for field_name in (
+                                "parent_uid",
+                                "parent_name",
+                                "parent_id",
+                                "parent_asset_id",
+                                "virtual_system_uids",
+                                "virtual_system_asset_ids",
+                                "interfaces",
+                                "raw_data",
+                            ):
+                                new_val = getattr(upd, field_name)
+                                if new_val != getattr(orig, field_name):
+                                    changed_cols[field_name] = (
+                                        list(new_val)
+                                        if isinstance(new_val, list)
+                                        else (dict(new_val) if isinstance(new_val, dict) else new_val)
+                                    )
+                            if changed_cols:
+                                patches.append((upd.id, orig.updated_at, changed_cols))
+                        if patches:
+                            await updater(patches)
+                    else:
+                        await self._cache.upsert_assets(modified)
         except LockAcquisitionError as exc:
             logger.warning(
                 f"Skipped cross-domain VSX reconciliation for '{mgmt_name}' because lock '{lock_key}' was busy: {exc}",
@@ -289,6 +328,8 @@ class AssetRefreshService:
         domain: str | None = None,
         *,
         types: Sequence[str] | None = None,
+        roles: Sequence[str] | None = None,
+        platforms: Sequence[str] | None = None,
         include_global: bool = False,
         cache_mode: CacheMode = "smart",
         cache_ttl: float | None = None,
@@ -296,6 +337,10 @@ class AssetRefreshService:
         """Ensure assets are fresh (unless `cache_mode="cache"`), then return cached `Asset` models."""
         expanded_types = expand_asset_types(types) if types is not None else None
         if expanded_types is not None and not expanded_types:
+            return []
+        role_set = _normalize_classification_filter(roles)
+        platform_set = _normalize_classification_filter(platforms)
+        if (role_set is not None and not role_set) or (platform_set is not None and not platform_set):
             return []
 
         if cache_mode != "cache":
@@ -317,6 +362,10 @@ class AssetRefreshService:
             assets = [a for a in assets if a.type.lower() in lowered_set]
         if not include_global and domain is None:
             assets = [a for a in assets if a.domain_name != "Global"]
+        if role_set is not None:
+            assets = [a for a in assets if a.asset_role.lower() in role_set]
+        if platform_set is not None:
+            assets = [a for a in assets if a.platform_family.lower() in platform_set]
         return assets
 
 

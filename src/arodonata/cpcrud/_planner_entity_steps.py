@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from arodonata.core.models.objects import CPObject
@@ -28,6 +29,67 @@ from arodonata.cpcrud.models import ConflictPolicy, NamingPrefixes, Outcome, Pla
 from arodonata.cpcrud.state_reader import HybridStateReader, StateLookupError, normalize_mask_length
 
 
+@dataclass(slots=True)
+class _DomainPlanState:
+    """Mutable per-domain dependency, failure, and name-resolution tracking during planning."""
+
+    failed_refs: set[str] = field(default_factory=set)
+    failed_ids: set[str] = field(default_factory=set)
+    res_map: dict[str, str] = field(default_factory=dict)
+    global_res: dict[str, str] = field(default_factory=dict)
+    ref_action_ids: dict[str, str] = field(default_factory=dict)
+    entity_action_ids: dict[tuple[str, str], str] = field(default_factory=dict)
+
+
+def _record_action_outcome(act: PlannedAction, state: _DomainPlanState) -> None:
+    """Update per-domain failure sets, auto-name resolutions, and dependency indices for `act`."""
+    if act.outcome in (Outcome.ERROR, Outcome.SKIPPED_DEPENDENCY):
+        if act.requested_name:
+            state.failed_refs.add(act.requested_name)
+        if act.name:
+            state.failed_refs.add(act.name)
+        state.failed_ids.add(act.action_id)
+        return
+
+    if act.outcome == Outcome.DELETE:
+        deleted_names = {n for n in (act.name, act.resolved_name) if n}
+        for target_map in (state.res_map, state.global_res):
+            for rk in [k for k, v in target_map.items() if k in deleted_names or v in deleted_names]:
+                target_map.pop(rk, None)
+        for n in deleted_names:
+            state.ref_action_ids.pop(n, None)
+            state.entity_action_ids[(act.object_type, n)] = act.action_id
+        if act.target_uid:
+            state.entity_action_ids.pop(("uid", act.target_uid), None)
+        return
+
+    if act.resolved_name:
+        state.res_map.pop(act.resolved_name, None)
+        state.global_res.pop(act.resolved_name, None)
+    if act.requested_name and act.resolved_name and act.requested_name != act.resolved_name:
+        state.res_map[act.requested_name] = act.resolved_name
+        state.global_res[act.requested_name] = act.resolved_name
+    if act.outcome == Outcome.UPDATE and act.name and act.resolved_name and act.name != act.resolved_name:
+        state.res_map[act.name] = act.resolved_name
+        state.global_res[act.name] = act.resolved_name
+
+    if act.outcome in (Outcome.CREATE, Outcome.UPDATE):
+        for ref_key in (act.requested_name, act.resolved_name, act.name):
+            if ref_key:
+                state.ref_action_ids[ref_key] = act.action_id
+                state.entity_action_ids[(act.object_type, ref_key)] = act.action_id
+                if act.layer or act.package:
+                    state.entity_action_ids[(act.object_type, f"{act.layer or act.package}:{ref_key}")] = act.action_id
+        if act.target_uid:
+            state.entity_action_ids[("uid", act.target_uid)] = act.action_id
+        if act.outcome == Outcome.CREATE and act.name:
+            state.entity_action_ids[("uid", f"planned:{act.object_type}:{act.name}")] = act.action_id
+            if act.layer or act.package:
+                state.entity_action_ids[("uid", f"planned:{act.object_type}:{act.layer or act.package}:{act.name}")] = (
+                    act.action_id
+                )
+
+
 async def _find_active_where_used_refs(
     usage: Mapping[str, Any],
     *,
@@ -50,6 +112,12 @@ async def _find_active_where_used_refs(
                 ref_uid = str(item.get("uid") or "").strip()
                 ref_name = str(item.get("name") or "").strip()
                 ref_type = str(item.get("type") or "").strip().lower() or None
+                rule_obj = item.get("rule")
+                if not ref_uid and not ref_name and isinstance(rule_obj, Mapping):
+                    ref_uid = str(rule_obj.get("uid") or "").strip()
+                    ref_name = str(rule_obj.get("name") or "").strip()
+                    if ref_type is None:
+                        ref_type = "rule"
                 if (ref_uid or ref_name) and reader.is_entity_virtually_deleted(
                     mgmt_name,
                     domain_name,
@@ -59,15 +127,13 @@ async def _find_active_where_used_refs(
                 ):
                     continue
                 label = ref_name or ref_uid or f"{category}-entry"
-                if ref_uid and ref_name:
+                if isinstance(rule_obj, Mapping):
+                    r_name = str(rule_obj.get("name") or "").strip()
+                    r_uid = str(rule_obj.get("uid") or "").strip()
+                    r_num = item.get("position")
+                    label = r_name or r_uid or (f"rule#{r_num}" if r_num is not None else label)
+                elif ref_uid and ref_name:
                     label = f"{ref_name} ({ref_uid})"
-                elif not ref_uid and not ref_name:
-                    rule_obj = item.get("rule")
-                    if isinstance(rule_obj, Mapping):
-                        r_name = str(rule_obj.get("name") or "").strip()
-                        r_uid = str(rule_obj.get("uid") or "").strip()
-                        r_num = item.get("position")
-                        label = r_name or r_uid or (f"rule#{r_num}" if r_num is not None else label)
                 if label not in refs:
                     refs.append(label)
     return refs

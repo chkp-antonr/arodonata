@@ -365,7 +365,7 @@ def format_invalid_credentials_failure(
     known_part = (
         f"Known domains on {mgmt_name!r}: {', '.join(known_list)}."
         if known_list
-        else f"No cached domains recorded yet on {mgmt_name!r} (call show_domains first)."
+        else f"No cached domains recorded yet on {mgmt_name!r} (call list_domains first)."
     )
     dom_part = f" for domain {domain!r}" if domain else ""
     detail_part = f" ({redact_sid(str(exc), known_sids=known_sids)})" if exc and str(exc) else ""

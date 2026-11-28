@@ -8,6 +8,7 @@ from collections import deque
 from collections.abc import Sequence
 from typing import Any
 
+from arodonata.core.context import get_write_session
 from arodonata.core.errors import ServerIdentityError
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.objects import CPObject
@@ -26,41 +27,45 @@ async def _load_domain_scoped_objects(
     *,
     global_cache: dict[str, list[CPObject]] | None = None,
     global_lock: asyncio.Lock | None = None,
+    apply_overlay: bool = True,
 ) -> list[CPObject]:
-    """Load cached objects for `(mgmt_name, domain_name)` plus `Global` with write-session overlay."""
+    """Load cached objects for `(mgmt_name, domain_name)` plus `Global` with optional write-session overlay."""
     raw_dom_objs = await cache.get_objects(mgmt_name=mgmt_name, domain_name=domain_name)
-    dom_objs = ObjectService.apply_context_overlay(
-        raw_dom_objs,
-        mgmt_name=mgmt_name,
-        domain_name=domain_name,
+    dom_objs = (
+        ObjectService.apply_context_overlay(
+            raw_dom_objs,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+        )
+        if apply_overlay
+        else list(raw_dom_objs)
     )
     if domain_name == "Global":
         return dom_objs
 
     if global_cache is not None and mgmt_name in global_cache:
-        global_objs = global_cache[mgmt_name]
+        raw_global = global_cache[mgmt_name]
     elif global_cache is not None and global_lock is not None:
         async with global_lock:
             if mgmt_name in global_cache:
-                global_objs = global_cache[mgmt_name]
+                raw_global = global_cache[mgmt_name]
             else:
                 raw_global = await cache.get_objects(mgmt_name=mgmt_name, domain_name="Global")
-                global_objs = ObjectService.apply_context_overlay(
-                    raw_global,
-                    mgmt_name=mgmt_name,
-                    domain_name="Global",
-                )
-                global_cache[mgmt_name] = global_objs
+                global_cache[mgmt_name] = raw_global
     else:
         raw_global = await cache.get_objects(mgmt_name=mgmt_name, domain_name="Global")
-        global_objs = ObjectService.apply_context_overlay(
+        if global_cache is not None:
+            global_cache[mgmt_name] = raw_global
+
+    global_objs = (
+        ObjectService.apply_context_overlay(
             raw_global,
             mgmt_name=mgmt_name,
             domain_name="Global",
         )
-        if global_cache is not None:
-            global_cache[mgmt_name] = global_objs
-
+        if apply_overlay
+        else list(raw_global)
+    )
     return [*global_objs, *dom_objs]
 
 
@@ -234,6 +239,49 @@ async def _fetch_single_topology_object_raw(
     return None
 
 
+def _extract_clause_refs(clause: Any) -> list[tuple[str | None, str | None]]:
+    """Extract `(uid, name)` reference tuples from a `group-with-exclusion` `include` or `except` clause."""
+    items = clause if isinstance(clause, list) else ([clause] if clause is not None else [])
+    refs: list[tuple[str | None, str | None]] = []
+    for item in items:
+        if isinstance(item, str) and item.strip():
+            refs.append((item.strip(), None))
+        elif isinstance(item, dict):
+            c_uid = str(item.get("uid") or "").strip() or None
+            c_name = str(item.get("name") or "").strip() or None
+            if c_uid or c_name:
+                refs.append((c_uid, c_name))
+    return refs
+
+
+def _lookup_indexed_object(
+    ref_uid: str | None,
+    ref_name: str | None,
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+) -> CPObject | None:
+    """Resolve a cached/indexed object across `(obj_by_uid, obj_by_name)` using exact then `.lower()` keys."""
+    clean_uid = ref_uid.strip() if isinstance(ref_uid, str) and ref_uid.strip() else None
+    clean_name = ref_name.strip() if isinstance(ref_name, str) and ref_name.strip() else None
+    if clean_uid:
+        found = obj_by_uid.get(clean_uid) or obj_by_uid.get(clean_uid.lower())
+        if found is not None:
+            return found
+    if clean_name:
+        found = obj_by_name.get(clean_name) or obj_by_name.get(clean_name.lower())
+        if found is not None:
+            return found
+    if clean_uid:
+        found = obj_by_name.get(clean_uid) or obj_by_name.get(clean_uid.lower())
+        if found is not None:
+            return found
+    if clean_name:
+        found = obj_by_uid.get(clean_name) or obj_by_uid.get(clean_name.lower())
+        if found is not None:
+            return found
+    return None
+
+
 def _unpack_topology_raw_object(
     mgmt_name: str,
     fallback_dom: str,
@@ -274,8 +322,13 @@ def _unpack_topology_raw_object(
         raw_members = cur_raw.get("members")
         if isinstance(raw_members, list):
             child_items.extend(raw_members)
-        if cp_obj.type == "group-with-exclusion" and cur_raw.get("include") is not None:
-            child_items.append(cur_raw.get("include"))
+        if cp_obj.type == "group-with-exclusion":
+            for clause_key in ("include", "except"):
+                clause_val = cur_raw.get(clause_key)
+                if isinstance(clause_val, list):
+                    child_items.extend(clause_val)
+                elif clause_val is not None:
+                    child_items.append(clause_val)
 
         for item in child_items:
             if isinstance(item, str) and item:
@@ -290,7 +343,11 @@ def _unpack_topology_raw_object(
                     and (item.get("mask-length4") is not None or item.get("subnet-mask") is not None)
                 )
                 has_range = bool(item.get("ipv4-address-first") and item.get("ipv4-address-last"))
-                has_inline_group = m_type == "group" and isinstance(item.get("members"), list)
+                has_inline_group = m_type in ("group", "group-with-exclusion") and (
+                    isinstance(item.get("members"), list)
+                    or item.get("include") is not None
+                    or item.get("except") is not None
+                )
                 if m_uid and (has_host_ip or has_net or has_range or has_inline_group):
                     raw_queue.append((eff_dom, item))
                 elif m_uid or m_name:
@@ -340,29 +397,73 @@ def _index_objects(
     return by_uid, by_name
 
 
-async def _resolve_topology_objects_on_demand(
-    api: ApiPort,
-    cache: ObjectCachePort,
-    mgmt_name: str,
-    domain_name: str,
+def _enqueue_missing_cached_members(
+    start_obj: CPObject,
     *,
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+    checked_cached_uids: set[str],
+    is_trusted_cached: Any,
+    pending_out: list[tuple[str | None, str | None]],
+    resolved_uids: set[str] | None = None,
+) -> None:
+    """BFS-walk `start_obj` and append any uncached or untrusted member references to `pending_out`."""
+    walk_q: deque[CPObject] = deque([start_obj])
+    while walk_q:
+        cur_obj = walk_q.popleft()
+        if cur_obj.uid in checked_cached_uids:
+            continue
+        checked_cached_uids.add(cur_obj.uid)
+        refs_to_walk: list[tuple[str | None, str | None]] = [(m_ref, None) for m_ref in cur_obj.members]
+        if cur_obj.type == "group-with-exclusion":
+            refs_to_walk.extend(_extract_clause_refs(cur_obj.raw_data.get("include")))
+            refs_to_walk.extend(_extract_clause_refs(cur_obj.raw_data.get("except")))
+        for m_uid, m_name in refs_to_walk:
+            child = _lookup_indexed_object(m_uid, m_name, obj_by_uid, obj_by_name)
+            if child is None:
+                pending_out.append((m_uid, m_name))
+            elif not is_trusted_cached(child) and (resolved_uids is None or child.uid not in resolved_uids):
+                pending_out.append((child.uid, child.name))
+            elif child.uid not in checked_cached_uids:
+                walk_q.append(child)
+
+
+async def _merge_global_object_cache(
+    mgmt_name: str,
+    new_global: list[CPObject],
+    global_cache: dict[str, list[CPObject]],
+    global_lock: asyncio.Lock | None,
+) -> None:
+    """Thread-safely merge newly fetched `Global` objects into the shared per-refresh cache."""
+
+    def _apply_merge() -> None:
+        cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
+        for g_obj in new_global:
+            cur_glob[g_obj.uid] = g_obj
+        global_cache[mgmt_name] = ObjectService.apply_context_overlay(
+            list(cur_glob.values()),
+            mgmt_name=mgmt_name,
+            domain_name="Global",
+        )
+
+    if global_lock is not None:
+        async with global_lock:
+            _apply_merge()
+    else:
+        _apply_merge()
+
+
+def _collect_initial_object_wave(
     seed_refs: Sequence[tuple[str | None, str | None]],
-    existing_objects: Sequence[CPObject],
-    force_refresh: bool = False,
-    trusted_object_domains: set[str] | None = None,
-    global_cache: dict[str, list[CPObject]] | None = None,
-    global_lock: asyncio.Lock | None = None,
-) -> list[CPObject]:
-    """Cycle-safe bounded BFS resolution of referenced topology objects/groups across `domain_name` and `Global`."""
-    merged_objects = list(existing_objects)
-    obj_by_uid, obj_by_name = _index_objects(merged_objects, domain_name=domain_name)
-
-    def _is_trusted_cached(obj: CPObject) -> bool:
-        return not force_refresh and (trusted_object_domains is None or obj.domain_name in trusted_object_domains)
-
+    *,
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+    force_refresh: bool,
+    is_trusted_cached: Any,
+    checked_cached_uids: set[str],
+) -> list[tuple[str | None, str | None]]:
+    """Build the first wave of missing or untrusted `(uid, name)` lookups from `seed_refs`."""
     pending_wave: list[tuple[str | None, str | None]] = []
-    checked_cached_uids: set[str] = set()
-
     for r_uid, r_name in seed_refs:
         clean_uid = r_uid.strip() if isinstance(r_uid, str) and r_uid.strip() else None
         clean_name = r_name.strip() if isinstance(r_name, str) and r_name.strip() else None
@@ -372,39 +473,42 @@ async def _resolve_topology_objects_on_demand(
             pending_wave.append((clean_uid, clean_name))
             continue
 
-        root = (
-            (obj_by_uid.get(clean_uid) if clean_uid else None)
-            or (obj_by_name.get(clean_name) if clean_name else None)
-            or (obj_by_name.get(clean_uid) if clean_uid else None)
-            or (obj_by_uid.get(clean_name) if clean_name else None)
-        )
-        if root is None or not _is_trusted_cached(root):
+        root = _lookup_indexed_object(clean_uid, clean_name, obj_by_uid, obj_by_name)
+        if root is None or not is_trusted_cached(root):
             pending_wave.append((clean_uid, clean_name))
             continue
 
-        walk_q: deque[CPObject] = deque([root])
-        while walk_q:
-            cur_obj = walk_q.popleft()
-            if cur_obj.uid in checked_cached_uids:
-                continue
-            checked_cached_uids.add(cur_obj.uid)
-            for m_ref in cur_obj.members:
-                child = obj_by_uid.get(m_ref) or obj_by_name.get(m_ref)
-                if child is None:
-                    pending_wave.append((m_ref, None))
-                elif not _is_trusted_cached(child):
-                    pending_wave.append((child.uid, child.name))
-                elif child.uid not in checked_cached_uids:
-                    walk_q.append(child)
+        _enqueue_missing_cached_members(
+            root,
+            obj_by_uid=obj_by_uid,
+            obj_by_name=obj_by_name,
+            checked_cached_uids=checked_cached_uids,
+            is_trusted_cached=is_trusted_cached,
+            pending_out=pending_wave,
+        )
+    return pending_wave
 
-    if not pending_wave:
-        return merged_objects
 
-    search_domains = [domain_name] if domain_name == "Global" else [domain_name, "Global"]
+async def _run_object_resolution_waves(
+    api: ApiPort,
+    *,
+    mgmt_name: str,
+    domain_name: str,
+    search_domains: Sequence[str],
+    initial_wave: list[tuple[str | None, str | None]],
+    merged_objects: list[CPObject],
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+    force_refresh: bool,
+    is_trusted_cached: Any,
+    checked_cached_uids: set[str],
+) -> dict[tuple[str, str], CPObject]:
+    """Execute bounded cross-domain BFS fetch waves until all reachable references resolve."""
     sem = asyncio.Semaphore(TOPOLOGY_OBJECT_LOOKUP_CONCURRENCY)
     attempted_keys: set[str] = set()
     resolved_uids: set[str] = set()
     fetched_by_dom_uid: dict[tuple[str, str], CPObject] = {}
+    pending_wave = list(initial_wave)
 
     async def _lookup_across_domains(
         q_uid: str | None,
@@ -424,15 +528,12 @@ async def _resolve_topology_objects_on_demand(
             if key in attempted_keys:
                 continue
             if not force_refresh:
-                already = (
-                    (obj_by_uid.get(q_uid) if q_uid else None)
-                    or (obj_by_name.get(q_name) if q_name else None)
-                    or (obj_by_name.get(q_uid) if q_uid else None)
-                )
+                already = _lookup_indexed_object(q_uid, q_name, obj_by_uid, obj_by_name)
                 if (
                     already is not None
                     and not already.members
-                    and (_is_trusted_cached(already) or already.uid in resolved_uids)
+                    and already.type != "group-with-exclusion"
+                    and (is_trusted_cached(already) or already.uid in resolved_uids)
                 ):
                     continue
             if q_uid and q_uid in resolved_uids:
@@ -463,78 +564,203 @@ async def _resolve_topology_objects_on_demand(
                     if not (c_uid and c_uid in resolved_uids):
                         next_wave.append((c_uid, c_name))
                 else:
-                    cached_child = (
-                        (obj_by_uid.get(c_uid) if c_uid else None)
-                        or (obj_by_name.get(c_name) if c_name else None)
-                        or (obj_by_name.get(c_uid) if c_uid else None)
-                    )
+                    cached_child = _lookup_indexed_object(c_uid, c_name, obj_by_uid, obj_by_name)
                     if cached_child is None or (
-                        not _is_trusted_cached(cached_child) and cached_child.uid not in resolved_uids
+                        not is_trusted_cached(cached_child) and cached_child.uid not in resolved_uids
                     ):
                         next_wave.append((c_uid, c_name))
                     else:
-                        # Walk any already-cached child group to catch deeper missing or untrusted members
-                        walk_q2: deque[CPObject] = deque([cached_child])
-                        while walk_q2:
-                            cur2 = walk_q2.popleft()
-                            if cur2.uid in checked_cached_uids:
-                                continue
-                            checked_cached_uids.add(cur2.uid)
-                            for m_ref2 in cur2.members:
-                                ch2 = obj_by_uid.get(m_ref2) or obj_by_name.get(m_ref2)
-                                if ch2 is None:
-                                    next_wave.append((m_ref2, None))
-                                elif not _is_trusted_cached(ch2) and ch2.uid not in resolved_uids:
-                                    next_wave.append((ch2.uid, ch2.name))
-                                elif ch2.uid not in checked_cached_uids:
-                                    walk_q2.append(ch2)
+                        _enqueue_missing_cached_members(
+                            cached_child,
+                            obj_by_uid=obj_by_uid,
+                            obj_by_name=obj_by_name,
+                            checked_cached_uids=checked_cached_uids,
+                            is_trusted_cached=is_trusted_cached,
+                            pending_out=next_wave,
+                            resolved_uids=resolved_uids,
+                        )
 
         pending_wave = next_wave
 
-    if not fetched_by_dom_uid:
-        return merged_objects
+    return fetched_by_dom_uid
 
+
+async def _persist_and_merge_resolved_objects(
+    cache: ObjectCachePort,
+    *,
+    mgmt_name: str,
+    domain_name: str,
+    existing_objects: Sequence[CPObject],
+    fetched_by_dom_uid: dict[tuple[str, str], CPObject],
+    global_cache: dict[str, list[CPObject]] | None,
+    global_lock: asyncio.Lock | None,
+    apply_overlay: bool,
+) -> list[CPObject]:
+    """Persist fetched non-WriteSession objects, update Global cache, and assemble the merged list."""
     newly_fetched = list(fetched_by_dom_uid.values())
-    await cache.upsert_objects(newly_fetched, sync_states=None)
+    persistable = [
+        o for o in newly_fetched if get_write_session(mgmt_name=mgmt_name, domain_name=o.domain_name) is None
+    ]
+    if persistable:
+        await cache.upsert_objects(persistable, sync_states=None)
 
     new_global = [o for o in newly_fetched if o.domain_name == "Global"]
-    if new_global and global_cache is not None:
-        if global_lock is not None:
-            async with global_lock:
-                cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
-                for g_obj in new_global:
-                    cur_glob[g_obj.uid] = g_obj
-                global_cache[mgmt_name] = ObjectService.apply_context_overlay(
-                    list(cur_glob.values()),
-                    mgmt_name=mgmt_name,
-                    domain_name="Global",
-                )
-        else:
-            cur_glob = {o.uid: o for o in global_cache.get(mgmt_name, [])}
-            for g_obj in new_global:
-                cur_glob[g_obj.uid] = g_obj
-            global_cache[mgmt_name] = ObjectService.apply_context_overlay(
-                list(cur_glob.values()),
-                mgmt_name=mgmt_name,
-                domain_name="Global",
-            )
+    if new_global and global_cache is not None and get_write_session(mgmt_name=mgmt_name, domain_name="Global") is None:
+        await _merge_global_object_cache(mgmt_name, new_global, global_cache, global_lock)
 
-    # Deduplicate merged_objects by (domain_name, uid) with newly fetched objects applied, then write-session overlay
     by_dom_uid: dict[tuple[str, str], CPObject] = {(o.domain_name, o.uid): o for o in existing_objects}
     by_dom_uid.update(fetched_by_dom_uid)
-    dom_list = ObjectService.apply_context_overlay(
-        [o for o in by_dom_uid.values() if o.domain_name == domain_name],
-        mgmt_name=mgmt_name,
-        domain_name=domain_name,
+    raw_dom_list = [o for o in by_dom_uid.values() if o.domain_name == domain_name]
+    dom_list = (
+        ObjectService.apply_context_overlay(
+            raw_dom_list,
+            mgmt_name=mgmt_name,
+            domain_name=domain_name,
+        )
+        if apply_overlay
+        else raw_dom_list
     )
     if domain_name == "Global":
         return dom_list
-    glob_list = ObjectService.apply_context_overlay(
-        [o for o in by_dom_uid.values() if o.domain_name == "Global"],
-        mgmt_name=mgmt_name,
-        domain_name="Global",
+    raw_glob_list = [o for o in by_dom_uid.values() if o.domain_name == "Global"]
+    glob_list = (
+        ObjectService.apply_context_overlay(
+            raw_glob_list,
+            mgmt_name=mgmt_name,
+            domain_name="Global",
+        )
+        if apply_overlay
+        else raw_glob_list
     )
     return [*glob_list, *dom_list]
+
+
+async def _resolve_topology_objects_on_demand(
+    api: ApiPort,
+    cache: ObjectCachePort,
+    mgmt_name: str,
+    domain_name: str,
+    *,
+    seed_refs: Sequence[tuple[str | None, str | None]],
+    existing_objects: Sequence[CPObject],
+    force_refresh: bool = False,
+    trusted_object_domains: set[str] | None = None,
+    global_cache: dict[str, list[CPObject]] | None = None,
+    global_lock: asyncio.Lock | None = None,
+    apply_overlay: bool = True,
+) -> list[CPObject]:
+    """Cycle-safe bounded BFS resolution of referenced topology objects/groups across `domain_name` and `Global`."""
+    merged_objects = list(existing_objects)
+    obj_by_uid, obj_by_name = _index_objects(merged_objects, domain_name=domain_name)
+
+    def _is_trusted_cached(obj: CPObject) -> bool:
+        return not force_refresh and (trusted_object_domains is None or obj.domain_name in trusted_object_domains)
+
+    checked_cached_uids: set[str] = set()
+    initial_wave = _collect_initial_object_wave(
+        seed_refs,
+        obj_by_uid=obj_by_uid,
+        obj_by_name=obj_by_name,
+        force_refresh=force_refresh,
+        is_trusted_cached=_is_trusted_cached,
+        checked_cached_uids=checked_cached_uids,
+    )
+    if not initial_wave:
+        return merged_objects
+
+    search_domains = [domain_name] if domain_name == "Global" else [domain_name, "Global"]
+    fetched_by_dom_uid = await _run_object_resolution_waves(
+        api,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        search_domains=search_domains,
+        initial_wave=initial_wave,
+        merged_objects=merged_objects,
+        obj_by_uid=obj_by_uid,
+        obj_by_name=obj_by_name,
+        force_refresh=force_refresh,
+        is_trusted_cached=_is_trusted_cached,
+        checked_cached_uids=checked_cached_uids,
+    )
+    if not fetched_by_dom_uid:
+        return merged_objects
+
+    return await _persist_and_merge_resolved_objects(
+        cache,
+        mgmt_name=mgmt_name,
+        domain_name=domain_name,
+        existing_objects=existing_objects,
+        fetched_by_dom_uid=fetched_by_dom_uid,
+        global_cache=global_cache,
+        global_lock=global_lock,
+        apply_overlay=apply_overlay,
+    )
+
+
+def _merge_int_intervals(intervals: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort and merge overlapping or adjacent `(lo, hi)` IPv4 integer intervals."""
+    if not intervals:
+        return []
+    ordered = sorted((min(lo, hi), max(lo, hi)) for lo, hi in intervals)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for lo, hi in ordered[1:]:
+        prev_lo, prev_hi = merged[-1]
+        if lo <= prev_hi + 1:
+            merged[-1] = (prev_lo, max(prev_hi, hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def _subtract_int_intervals(
+    includes: Sequence[tuple[int, int]],
+    excludes: Sequence[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Compute sorted disjoint `(lo, hi)` intervals for `union(includes) \\ union(excludes)`."""
+    inc_merged = _merge_int_intervals(includes)
+    if not excludes or not inc_merged:
+        return inc_merged
+    exc_merged = _merge_int_intervals(excludes)
+    residual: list[tuple[int, int]] = []
+    for i_lo, i_hi in inc_merged:
+        cur_lo = i_lo
+        for e_lo, e_hi in exc_merged:
+            if e_hi < cur_lo:
+                continue
+            if e_lo > i_hi:
+                break
+            if e_lo > cur_lo:
+                residual.append((cur_lo, e_lo - 1))
+            if e_hi >= i_hi:
+                cur_lo = i_hi + 1
+                break
+            cur_lo = max(cur_lo, e_hi + 1)
+        if cur_lo <= i_hi:
+            residual.append((cur_lo, i_hi))
+    return residual
+
+
+def _expand_clause_refs_to_intervals(
+    clause_refs: Sequence[tuple[str | None, str | None]],
+    *,
+    obj_by_uid: dict[str, CPObject],
+    obj_by_name: dict[str, CPObject],
+    ancestor_uids: frozenset[str],
+) -> list[tuple[int, int]]:
+    """Resolve `include` or `except` clause references into `(lo, hi)` integer bounds."""
+    bounds: list[tuple[int, int]] = []
+    for c_uid, c_name in clause_refs:
+        target = _lookup_indexed_object(c_uid, c_name, obj_by_uid, obj_by_name)
+        if target is None or target.uid in ancestor_uids:
+            continue
+        for _, lo, hi, _, _ in _expand_cp_object(
+            target,
+            obj_by_uid=obj_by_uid,
+            obj_by_name=obj_by_name,
+            _visited_uids=ancestor_uids,
+        ):
+            bounds.append((lo, hi))
+    return bounds
 
 
 def _expand_cp_object(
@@ -542,11 +768,12 @@ def _expand_cp_object(
     *,
     obj_by_uid: dict[str, CPObject],
     obj_by_name: dict[str, CPObject],
+    _visited_uids: frozenset[str] = frozenset(),
 ) -> list[tuple[str, int, int, int, str]]:
-    """Cycle-safe BFS expansion of a `CPObject` (`host`, `network`, `address-range`, or nested `group`)."""
+    """Cycle-safe BFS expansion of a `CPObject` (`host`, `network`, `address-range`, `group`, or `group-with-exclusion`)."""
     results: list[tuple[str, int, int, int, str]] = []
     seen_intervals: set[str] = set()
-    visited_uids: set[str] = set()
+    visited_uids: set[str] = set(_visited_uids)
     queue: deque[CPObject] = deque([root_obj])
     root_ref = root_obj.name
 
@@ -555,6 +782,43 @@ def _expand_cp_object(
         if curr.uid in visited_uids:
             continue
         visited_uids.add(curr.uid)
+
+        if curr.type == "group-with-exclusion":
+            ancestor_uids = frozenset(visited_uids)
+            inc_refs = _extract_clause_refs(curr.raw_data.get("include"))
+            if not inc_refs and curr.members:
+                inc_refs = [(m_ref, None) for m_ref in curr.members]
+            exc_refs = _extract_clause_refs(curr.raw_data.get("except"))
+            inc_bounds = _expand_clause_refs_to_intervals(
+                inc_refs,
+                obj_by_uid=obj_by_uid,
+                obj_by_name=obj_by_name,
+                ancestor_uids=ancestor_uids,
+            )
+            exc_bounds = _expand_clause_refs_to_intervals(
+                exc_refs,
+                obj_by_uid=obj_by_uid,
+                obj_by_name=obj_by_name,
+                ancestor_uids=ancestor_uids,
+            )
+            for r_lo, r_hi in _subtract_int_intervals(inc_bounds, exc_bounds):
+                for net in ipaddress.summarize_address_range(
+                    ipaddress.IPv4Address(r_lo),
+                    ipaddress.IPv4Address(r_hi),
+                ):
+                    cidr_str = str(net)
+                    if cidr_str not in seen_intervals:
+                        seen_intervals.add(cidr_str)
+                        results.append(
+                            (
+                                cidr_str,
+                                int(net.network_address),
+                                int(net.broadcast_address),
+                                net.prefixlen,
+                                root_ref,
+                            )
+                        )
+            continue
 
         if curr.ipv4_address:
             try:
@@ -600,7 +864,7 @@ def _expand_cp_object(
 
         if curr.members:
             for m_ref in curr.members:
-                child = obj_by_uid.get(m_ref) or obj_by_name.get(m_ref)
+                child = _lookup_indexed_object(m_ref, None, obj_by_uid, obj_by_name)
                 if child is not None and child.uid not in visited_uids:
                     queue.append(child)
 
@@ -615,14 +879,7 @@ def _expand_specific_reference(
     obj_by_name: dict[str, CPObject],
 ) -> list[tuple[str, int, int, int, str]]:
     """Recursively expand a Check Point network object or group into `(cidr_or_range, lo, hi, prefix_len, source_ref)` tuples."""
-    root_obj: CPObject | None = None
-    if ref_uid and ref_uid in obj_by_uid:
-        root_obj = obj_by_uid[ref_uid]
-    elif ref_name and ref_name in obj_by_name:
-        root_obj = obj_by_name[ref_name]
-    elif ref_uid and ref_uid in obj_by_name:
-        root_obj = obj_by_name[ref_uid]
-
+    root_obj = _lookup_indexed_object(ref_uid, ref_name, obj_by_uid, obj_by_name)
     if root_obj is None:
         return []
 

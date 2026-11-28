@@ -11,7 +11,7 @@ from weakref import WeakKeyDictionary
 import arlogi
 
 from arodonata.core.errors import ServerIdentityError
-from arodonata.core.models.assets import Asset
+from arodonata.core.models.assets import POLICY_TARGET_ROLES, Asset, classify_asset_role
 from arodonata.core.models.common import CacheMode
 from arodonata.core.models.domains import RefreshOutcome
 from arodonata.core.models.scripts import CpridScriptMode
@@ -82,18 +82,7 @@ EXCLUDED_GATEWAY_TYPES: frozenset[str] = frozenset(
 
 def is_policy_enforcing_gateway(asset: Asset) -> bool:
     """Return `True` if `asset` is a policy-enforcing gateway, cluster, or VSX Virtual System."""
-    a_type = asset.type.strip()
-    if a_type in EXCLUDED_GATEWAY_TYPES:
-        return False
-    if a_type == "CpmiHostCkp":
-        # CpmiHostCkp is used for management hosts unless the firewall blade is explicitly enabled
-        return asset.network_security_blades.get("firewall") is True
-    if a_type in POLICY_GATEWAY_TYPES:
-        return True
-    lower_type = a_type.lower()
-    if "member" in lower_type or "vsx" in lower_type or "checkpoint-host" in lower_type:
-        return False
-    return "gateway" in lower_type or "cluster" in lower_type or "virtual-system" in lower_type
+    return classify_asset_role(asset) in POLICY_TARGET_ROLES
 
 
 def _normalize_gateway_filter_tokens(gateways: Sequence[str] | str | None) -> list[str]:

@@ -1185,3 +1185,90 @@ async def test_targeted_refresh_and_lazy_package_load_scrub_active_write_session
             assert any(REDACTED_PLACEHOLDER in msg for msg in logged)
     finally:
         await db.close()
+
+
+@pytest.mark.spec("SCN-TOPO-023-1")
+async def test_topology_writesession_sql_isolation_cli_mgmt_scope_and_mask_zero() -> None:
+    """DA-004, DA-014, DA-034, DA-056: Topology SQL isolation under WriteSession, mgmt scoping, annotation ID match, and /0 route mask."""
+    from arodonata.core.context import WriteSession, write_session_context
+    from arodonata.core.models.objects import CPObject
+    from arodonata.core.models.topology import TopologyAnnotation
+    from arodonata.core.services.topology.diagnostics import get_topology_annotations
+    from arodonata.core.services.topology.normalizer import _parse_route_destination
+    from arodonata.core.services.topology.objects import _resolve_topology_objects_on_demand
+    from arodonata.core.services.topology.route_scripts import resolve_gateway_cli_targets
+
+    # DA-056: integer 0 mask_length preserved for default route
+    assert str(_parse_route_destination({"dest": "0.0.0.0", "mask-length": 0})) == "0.0.0.0/0"
+
+    # DA-014: resolve_gateway_cli_targets isolates identical UIDs across management servers
+    vs_m1 = Asset.from_cp_dict(
+        "mds1",
+        "DomA",
+        {
+            "uid": "shared-vs",
+            "name": "vs-1",
+            "type": "virtual-system",
+            "parent_uid": "shared-parent",
+            "vsx-gateway": {"uid": "shared-parent"},
+        },
+    )
+    gw_m1 = Asset.from_cp_dict("mds1", "DomA", {"uid": "shared-parent", "name": "gw-mds1", "type": "vsx-gateway"})
+    gw_m2 = Asset.from_cp_dict("mds2", "DomA", {"uid": "shared-parent", "name": "gw-mds2", "type": "vsx-gateway"})
+    targets = resolve_gateway_cli_targets(vs_m1, [gw_m2, gw_m1, vs_m1])
+    assert len(targets) == 1
+    assert targets[0].node_name == "gw-mds1"
+
+    # DA-004: _resolve_topology_objects_on_demand skips shared cache writes when WriteSession is active for domain
+    upserted: list[CPObject] = []
+
+    class _FakeObjCache:
+        async def upsert_objects(self, objs: list[CPObject], **_k: Any) -> int:
+            upserted.extend(objs)
+            return len(objs)
+
+    class _FakeObjApi:
+        async def api_call(self, _m: str, _cmd: str, _payload: dict[str, Any], **_k: Any) -> ApiCallResult:
+            return ApiCallResult(
+                success=True,
+                data={
+                    "object": {
+                        "uid": "net-ws-1",
+                        "name": "UncommittedNet",
+                        "type": "network",
+                        "subnet4": "10.9.0.0",
+                        "mask-length4": 24,
+                    }
+                },
+            )
+
+    ws = WriteSession(mgmt_name="mds1", domain_name="DomA", sid="sid-ws-topo", server_ip="10.0.0.1")
+    with write_session_context(ws):
+        resolved = await _resolve_topology_objects_on_demand(
+            _FakeObjApi(),  # type: ignore[arg-type]
+            _FakeObjCache(),  # type: ignore[arg-type]
+            "mds1",
+            "DomA",
+            seed_refs=[("net-ws-1", "UncommittedNet")],
+            existing_objects=[],
+        )
+    assert any(o.uid == "net-ws-1" for o in resolved)
+    assert upserted == []
+
+    # DA-034: get_topology_annotations matches composite mgmt:domain:uid and mgmt:domain:name
+    ann = TopologyAnnotation(
+        mgmt_name="mds1",
+        domain_name="DomA",
+        gateway_uid="gw-uid-1",
+        gateway_name="gw-name-1",
+        interface_name="eth0",
+        cidr_or_range="10.1.0.0/24",
+        disposition="confirmed",
+    )
+
+    class _FakeAnnCache:
+        async def get_topology_annotations(self, **_k: Any) -> list[TopologyAnnotation]:
+            return [ann]
+
+    assert len(await get_topology_annotations(_FakeAnnCache(), gateway="mds1:DomA:gw-uid-1")) == 1  # type: ignore[arg-type]
+    assert len(await get_topology_annotations(_FakeAnnCache(), gateway="mds1:DomA:gw-name-1")) == 1  # type: ignore[arg-type]

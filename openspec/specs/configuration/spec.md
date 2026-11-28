@@ -195,9 +195,29 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 **Intent**: Expose typed, validated settings fields for multi-server API versions, ports, session TTLs, login throttling, cache windows, SQLite busy timeouts, CPCRUD schema path overrides, and topology confidence weights.\
 **Non-goals**: Core required `mgmt_names`/`mgmt_servers` parsing (`REQ-CONFIG-001`) or timeout calculation rules (`REQ-CONFIG-004`).
 
-`ArodonataSettings` SHALL expose and validate `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights` with safe defaults and per-server resolution.
+`ArodonataSettings` SHALL expose and validate `api_versions`, `api_version`, `mgmt_port` (`1..65535`), `max_response_bytes` (`>= 1024`, default `67108864`), `max_query_pages` (`>= 1`, default `5000`), `max_query_objects` (`>= 1`, default `1000000`), `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights` with safe defaults and per-server resolution.
 
 #### Scenario: SCN-CONFIG-009-1 — Operational and per-server version settings resolve with validated defaults and overrides
 
-- **WHEN** `ArodonataSettings` is constructed with defaults or overrides for `api_versions`, `api_version`, `mgmt_port`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights`
-- **THEN** all fields SHALL enforce their Pydantic numeric bounds and per-server `api_versions` resolution SHALL fall back to `api_version` when a server entry is omitted
+- **WHEN** `ArodonataSettings` is constructed with defaults or overrides (including `mgmt_port <= 0` / `> 65535`, `max_response_bytes < 1024`, `api_versions`, `api_version`, `session_expire_seconds`, `login_throttle_window`, `login_max_wait`, `domain_list_ttl`, `max_incremental_changes`, `sqlite_busy_timeout_ms`, `cpcrud_schema_path`, and `topology_confidence_weights`)
+- **THEN** all fields SHALL enforce their Pydantic numeric bounds (`mgmt_port` within `1..65535`, `max_response_bytes >= 1024`) and per-server `api_versions` resolution SHALL fall back to `api_version` when a server entry is omitted
+
+#### Scenario: SCN-CONFIG-009-2 — Pagination page and object caps bound api_query and rulebase paging
+
+- **WHEN** `AMgmtClient.api_query()` exceeds `max_query_pages` or `max_query_objects`, OR `fetch_paged_rulebase()` exceeds `MAX_RULEBASE_OBJECTS`
+- **THEN** `api_query()` SHALL return `ApiQueryResult(success=False, code="paging_limit_exceeded")` before unbounded accumulation, and rulebase paging SHALL stop cleanly at the configured object cap
+
+### Requirement: Nested Pydantic Secret Serialization Masking
+
+**ID**: REQ-CONFIG-010\
+**Intent**: Prevent settings credentials and database passwords from leaking in plaintext when settings objects are nested inside parent Pydantic v2 models.\
+**Non-goals**: Changing top-level `ArodonataSettings` or `ArodonataMCPSettings` environment variable parsing.
+
+`ArodonataSettings` and `ArodonataMCPSettings` MUST enforce secret redaction via Pydantic field serializers so sensitive fields (`password`, `api_key`, `api_keys`, `database_url`, and `tokens`) remain masked in both direct and enclosing-model `model_dump()` and `model_dump_json()` serialization.
+
+#### Scenario: SCN-CONFIG-010-1 — Enclosing Pydantic models serialize nested settings without exposing secrets
+
+- **GIVEN** an `ArodonataSettings` or `ArodonataMCPSettings` instance containing credentials, API keys, bearer tokens, or a database URL password
+- **WHEN** an enclosing Pydantic `BaseModel` serializes the nested settings via `model_dump()` or `model_dump_json()`
+- **THEN** all sensitive fields SHALL be emitted as redacted placeholders or masked URLs in both Python dicts and JSON output
+- **AND** direct `model_dump()` and `model_dump_json()` calls on the settings models SHALL continue masking those fields

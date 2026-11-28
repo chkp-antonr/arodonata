@@ -342,3 +342,48 @@ def test_cprid_repository_script_settings_precedence_and_validation(
     monkeypatch.setenv("ARODONATA_CPRID_REPOSITORY_SCRIPT_NAME", "   ")
     with pytest.raises(PydanticValidationError):
         ArodonataSettings()
+
+
+@pytest.mark.spec("SCN-CONFIG-010-1")
+def test_nested_pydantic_models_serialize_settings_without_exposing_secrets() -> None:
+    """SCN-CONFIG-010-1: Enclosing Pydantic models mask secrets via @field_serializer."""
+    from pydantic import BaseModel
+
+    from arodonata.mcp.config import ArodonataMCPSettings
+
+    class AppConfig(BaseModel):
+        core_cred: ArodonataSettings
+        core_keys: ArodonataSettings
+        mcp: ArodonataMCPSettings
+
+    core_cred = ArodonataSettings(
+        mgmt_ip="10.0.0.1",
+        username="admin",
+        password="super-secret-password",
+        database_url="postgresql+asyncpg://dbuser:secret-db-pass@db.internal:5432/arodonata",
+    )
+    core_keys = ArodonataSettings(
+        mgmt_names=["mds1"],
+        mgmt_servers=["10.0.0.2"],
+        api_key="single-secret-api-key",
+    )
+    mcp = ArodonataMCPSettings(
+        tokens=["client_a=top-secret-bearer-token-0123456789abcdef"],
+    )
+
+    wrapper = AppConfig(core_cred=core_cred, core_keys=core_keys, mcp=mcp)
+    dumped = wrapper.model_dump()
+    dumped_json = wrapper.model_dump_json()
+
+    assert dumped["core_cred"]["password"] == REDACTED_PLACEHOLDER
+    assert "secret-db-pass" not in dumped["core_cred"]["database_url"]
+    assert REDACTED_PLACEHOLDER in dumped["core_cred"]["database_url"]
+    assert dumped["core_keys"]["api_key"] == REDACTED_PLACEHOLDER
+    assert dumped["core_keys"]["api_keys"] == [REDACTED_PLACEHOLDER]
+    assert dumped["mcp"]["tokens"] == [REDACTED_PLACEHOLDER]
+
+    for secret in ("super-secret-password", "secret-db-pass", "single-secret-api-key", "top-secret-bearer-token"):
+        assert secret not in dumped_json
+        assert secret not in core_cred.model_dump_json()
+        assert secret not in core_keys.model_dump_json()
+        assert secret not in mcp.model_dump_json()

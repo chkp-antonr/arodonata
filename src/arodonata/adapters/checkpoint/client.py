@@ -157,7 +157,12 @@ class AMgmtClient:
             monotonic_fn=monotonic_fn,
             sleep_fn=sleep_fn,
         )
-        default_lock_ttl = max(180.0, float(max(self._settings.api_timeout, self._settings.login_timeout)) + 60.0)
+        default_lock_ttl = max(
+            180.0,
+            float(self._settings.connect_timeout)
+            + float(max(self._settings.api_timeout, self._settings.login_timeout))
+            + 60.0,
+        )
         self._rate_limiter = rate_limiter or RateLimiter(
             concurrent_limit=self._settings.concurrent_limit,
             slot_timeout=self._settings.rate_limit_slot_timeout,
@@ -560,12 +565,8 @@ class AMgmtClient:
                 if switched and retry_res is not None:
                     res = retry_res
                 else:
-                    if ctx.using_cached_sid:
-                        await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
                     raise
             else:
-                if ctx.using_cached_sid:
-                    await self._cache.evict_sid(mgmt_name, dom_key, auth_identity=ctx.active_auth_identity)
                 raise
 
         # Handle session expiration on cached read-only session -> evict SID, re-login, and retry once
@@ -656,6 +657,8 @@ class AMgmtClient:
             details_level=details_level,
             payload=payload,
             limit=limit,
+            max_pages=self._settings.max_query_pages,
+            max_objects=self._settings.max_query_objects,
         )
 
     @traced

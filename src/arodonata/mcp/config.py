@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
-import json
 import os
 import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import arlogi
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_serializer, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from arodonata.core.config import ArodonataSettings, _split_csv
@@ -400,18 +399,10 @@ class ArodonataMCPSettings(BaseSettings):
 
         return build_validated_trust_policy(resolved_core, environ=environ)
 
-    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
-        """Serialize MCP settings with `tokens` masked."""
-        dumped = super().model_dump(**kwargs)
-        if "tokens" in dumped and dumped["tokens"]:
-            dumped["tokens"] = [REDACTED_PLACEHOLDER for _ in dumped["tokens"]]
-        return dumped
-
-    def model_dump_json(self, **kwargs: Any) -> str:
-        """Serialize MCP settings to JSON with `tokens` masked."""
-        dumped = self.model_dump(**{k: v for k, v in kwargs.items() if k != "indent"})
-        indent = kwargs.get("indent")
-        return json.dumps(dumped, indent=indent, default=str)
+    @field_serializer("tokens")
+    def _mask_tokens(self, value: list[str]) -> list[str]:
+        """Mask static bearer tokens during Pydantic serialization."""
+        return [REDACTED_PLACEHOLDER for _ in value] if value else value
 
     def __repr__(self) -> str:
         fields_repr: list[str] = []

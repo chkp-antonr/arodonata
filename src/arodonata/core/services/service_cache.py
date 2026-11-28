@@ -18,12 +18,10 @@ from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
 from arodonata.core.events import SyncProgressEvent
 from arodonata.core.models.common import (
-    CANONICAL_ASSET_TYPES,
     DEFAULT_SERVICE_TYPES,
-    OBJECT_TYPE_ALIASES,
     CacheMode,
-    normalize_any_type,
     normalize_service_type,
+    partition_entity_types,
     to_naive_utc,
     utc_now,
 )
@@ -38,28 +36,6 @@ from arodonata.core.services._typed_cache_sync import (
 )
 from arodonata.core.services.sync_coordinator import DomainProbeResult, DomainSyncCoordinator
 from arodonata.core.telemetry import span_attrs, traced
-
-_NON_SERVICE_OBJECT_TYPES: frozenset[str] = frozenset(
-    {
-        *OBJECT_TYPE_ALIASES.values(),
-        "host",
-        "network",
-        "address-range",
-        "multicast-address-range",
-        "group-with-exclusion",
-        "dns-domain",
-        "wildcard",
-        "security-zone",
-        "dynamic-object",
-        "time",
-        "time-group",
-        "access-role",
-        "tag",
-        "gsn-handover-group",
-        "network-feed",
-        "application-site",
-    }
-)
 
 
 class _ServiceCachePort(ServiceCachePort, SyncStatePort, Protocol):
@@ -114,21 +90,7 @@ class ServiceCacheService:
     def _normalize_types(self, types: Sequence[str] | None) -> list[str]:
         if types is None:
             return list(DEFAULT_SERVICE_TYPES)
-        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-        seen: list[str] = []
-        for t in types:
-            raw = str(t).strip()
-            if not raw:
-                continue
-            clean = normalize_service_type(raw)
-            any_clean = normalize_any_type(raw)
-            if not clean.startswith("service-") and (
-                any_clean.lower() in canonical_assets_lower or any_clean in _NON_SERVICE_OBJECT_TYPES
-            ):
-                continue
-            if clean and clean not in seen:
-                seen.append(clean)
-        return seen
+        return partition_entity_types(types, group_as_service=True).service_types
 
     async def stream_refresh_services(
         self,

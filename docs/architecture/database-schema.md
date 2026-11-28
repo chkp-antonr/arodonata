@@ -130,6 +130,11 @@ erDiagram
         json virtual_system_asset_ids
         json interfaces
         json network_security_blades
+        json management_blades
+        string asset_role "INDEX"
+        string platform_family "INDEX"
+        boolean is_policy_target "INDEX"
+        boolean is_execution_target "INDEX"
     }
     arodonata_gateway_topology {
         string id PK "mgmt_name:domain_name:gw_uid:iface:src_type:cidr"
@@ -399,6 +404,11 @@ Cached gateways, clusters, cluster members, VSX gateways/clusters/virtual system
 | `virtual_system_uids`, `virtual_system_asset_ids` | `list[str]` (JSON) | `NOT NULL` | Child VSX virtual system UIDs and human-readable `asset_id` values |
 | `interfaces` | `list[dict]` (JSON) | `NOT NULL` | Normalized network interfaces (`name`, `ipv4-address`, `ipv4-network-mask`, `topology`) |
 | `network_security_blades` | `dict` (JSON) | `NOT NULL` | Enabled software blades (`firewall`, `ips`, `url-filtering`, `anti-bot`, etc.) |
+| `management_blades` | `dict \| None` (JSON) | — | Enabled management blades (`multi-domain-server`, `network-policy-management`, `logging-and-status`, etc.); nullable for in-place `ALTER TABLE` evolution |
+| `asset_role` | `str \| None` | `INDEX` | Normalized vendor-neutral role (`gateway`, `cluster`, `cluster_member`, `vsx_gateway`, `vsx_cluster`, `vsx_cluster_member`, `virtual_system`, `management_server`, `mds`, `log_server`, `interoperable_device`, `unknown`); legacy `NULL` rows auto-classify on read |
+| `platform_family` | `str \| None` | `INDEX` | Normalized vendor platform (`gaia`, `gaia_embedded`, `maestro`, `cloudguard`, `open_server`, `unknown`); legacy `NULL` rows auto-classify on read |
+| `is_policy_target` | `bool \| None` | `INDEX` | `True` for policy-enforcing targets (`gateway`, `cluster`, `virtual_system`); legacy `NULL` rows auto-classify on read |
+| `is_execution_target` | `bool \| None` | `INDEX` | `True` for OS-backed CLI/upgrade hosts (`gateway`, `cluster_member`, `vsx_gateway`, `vsx_cluster_member`, `management_server`, `mds`, `log_server`); legacy `NULL` rows auto-classify on read |
 | `comments`, `raw_data`, `updated_at` | `str / JSON / datetime` | `NOT NULL` | Metadata, raw payload, and naive UTC timestamp (`color` is nullable) |
 
 ---

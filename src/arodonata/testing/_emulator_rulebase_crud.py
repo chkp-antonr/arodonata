@@ -11,6 +11,7 @@ from arodonata.core.models.common import ApiCallResult
 from ._emulator_lookup import as_list, global_read_only_error
 from ._emulator_models import (
     ANY_UID,
+    DROP_UID,
     LOG_TRACK_UID,
     NONE_TRACK_UID,
     cp_error,
@@ -226,7 +227,7 @@ def handle_rulebase_crud(
             act = normalize_action(req.get("action"), rule_kind=rule_kind)
             if isinstance(act, ApiCallResult):
                 return act, None
-            default_track = NONE_TRACK_UID if act == "Drop" else LOG_TRACK_UID
+            default_track = NONE_TRACK_UID if act in (DROP_UID, "Drop") else LOG_TRACK_UID
             trk = normalize_track(req.get("track", default_track), rule_kind=rule_kind)
             if isinstance(trk, ApiCallResult):
                 return trk, None

@@ -91,6 +91,53 @@ def _extract_anti_spoofing_mode(raw_if: dict[str, Any], *extra_dicts: dict[str, 
     return "unknown"
 
 
+def _merge_topology_dict(
+    topo_dict: dict[str, Any],
+    *,
+    is_external: bool,
+    leads_to_dmz: bool,
+    behind_mode: str,
+    specific_ref: str | None,
+    specific_uid: str | None,
+    specific_inline_cidr: str | None,
+    extract_inline_cidr: Any,
+) -> tuple[bool, bool, str, str | None, str | None, str | None]:
+    """Merge Check Point `topology` / `topology-settings` dictionary fields with uniform precedence."""
+    if bool(topo_dict.get("leads-to-internet") or topo_dict.get("leads_to_internet")):
+        is_external = True
+    if bool(topo_dict.get("leads-to-dmz") or topo_dict.get("leads_to_dmz") or topo_dict.get("interface-leads-to-dmz")):
+        leads_to_dmz = True
+    if not behind_mode:
+        behind_mode = str(
+            topo_dict.get("ip-address-behind-this-interface")
+            or topo_dict.get("ip_address_behind_this_interface")
+            or topo_dict.get("netaccess")
+            or ""
+        ).strip()
+    spec_val = (
+        topo_dict.get("leads-to-specific-network")
+        or topo_dict.get("leads_to_specific_network")
+        or topo_dict.get("specific-network")
+        or topo_dict.get("specific_network")
+        or topo_dict.get("specificGroup")
+    )
+    if isinstance(spec_val, dict):
+        specific_uid = specific_uid or (str(spec_val.get("uid") or "") or None)
+        specific_ref = specific_ref or (str(spec_val.get("name") or spec_val.get("uid") or "") or None)
+        specific_inline_cidr = specific_inline_cidr or extract_inline_cidr(spec_val)
+    elif isinstance(spec_val, str) and spec_val.strip() and not specific_ref:
+        specific_ref = spec_val.strip()
+    spec_uid_val = (
+        topo_dict.get("leads-to-specific-network-uid")
+        or topo_dict.get("leads_to_specific_network_uid")
+        or topo_dict.get("specific-network-uid")
+        or topo_dict.get("specific_network_uid")
+    )
+    if isinstance(spec_uid_val, str) and spec_uid_val.strip() and not specific_uid:
+        specific_uid = spec_uid_val.strip()
+    return is_external, leads_to_dmz, behind_mode, specific_ref, specific_uid, specific_inline_cidr
+
+
 def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -> _NormalizedInterface | None:
     """Normalize a Check Point interface dictionary across `show-gateways-and-servers`, `show-simple-*`, and CPMI formats."""
     owned = raw_if.get("owned-object") or raw_if.get("owned_object")
@@ -179,37 +226,16 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
 
     if isinstance(topo_field, dict):
         has_explicit_topology = True
-        if bool(topo_field.get("leads-to-internet") or topo_field.get("leads_to_internet")):
-            is_external = True
-        leads_to_dmz = bool(
-            topo_field.get("leads-to-dmz") or topo_field.get("leads_to_dmz") or topo_field.get("interface-leads-to-dmz")
+        is_external, leads_to_dmz, behind_mode, specific_ref, specific_uid, specific_inline_cidr = _merge_topology_dict(
+            topo_field,
+            is_external=is_external,
+            leads_to_dmz=leads_to_dmz,
+            behind_mode=behind_mode,
+            specific_ref=specific_ref,
+            specific_uid=specific_uid,
+            specific_inline_cidr=specific_inline_cidr,
+            extract_inline_cidr=_extract_inline_cidr,
         )
-        behind_mode = str(
-            topo_field.get("ip-address-behind-this-interface")
-            or topo_field.get("ip_address_behind_this_interface")
-            or ""
-        ).strip()
-        spec_val = (
-            topo_field.get("leads-to-specific-network")
-            or topo_field.get("leads_to_specific_network")
-            or topo_field.get("specific-network")
-            or topo_field.get("specific_network")
-            or topo_field.get("specificGroup")
-        )
-        if isinstance(spec_val, dict):
-            specific_uid = str(spec_val.get("uid") or "") or None
-            specific_ref = str(spec_val.get("name") or spec_val.get("uid") or "") or None
-            specific_inline_cidr = _extract_inline_cidr(spec_val)
-        elif isinstance(spec_val, str) and spec_val.strip():
-            specific_ref = spec_val.strip()
-        spec_uid_val = (
-            topo_field.get("leads-to-specific-network-uid")
-            or topo_field.get("leads_to_specific_network_uid")
-            or topo_field.get("specific-network-uid")
-            or topo_field.get("specific_network_uid")
-        )
-        if isinstance(spec_uid_val, str) and spec_uid_val.strip():
-            specific_uid = spec_uid_val.strip()
     elif isinstance(topo_field, str) and topo_field.strip():
         has_explicit_topology = True
         t_clean = topo_field.strip().lower()
@@ -226,42 +252,16 @@ def _normalize_interface(raw_if: dict[str, Any], *, is_vs_asset: bool = False) -
 
     if isinstance(topo_settings, dict):
         has_explicit_topology = True
-        if bool(topo_settings.get("leads-to-internet") or topo_settings.get("leads_to_internet")):
-            is_external = True
-        if bool(
-            topo_settings.get("interface-leads-to-dmz")
-            or topo_settings.get("leads-to-dmz")
-            or topo_settings.get("leads_to_dmz")
-        ):
-            leads_to_dmz = True
-        if not behind_mode:
-            behind_mode = str(
-                topo_settings.get("ip-address-behind-this-interface")
-                or topo_settings.get("ip_address_behind_this_interface")
-                or topo_settings.get("netaccess")
-                or ""
-            ).strip()
-        spec_val2 = (
-            topo_settings.get("leads-to-specific-network")
-            or topo_settings.get("leads_to_specific_network")
-            or topo_settings.get("specific-network")
-            or topo_settings.get("specific_network")
-            or topo_settings.get("specificGroup")
+        is_external, leads_to_dmz, behind_mode, specific_ref, specific_uid, specific_inline_cidr = _merge_topology_dict(
+            topo_settings,
+            is_external=is_external,
+            leads_to_dmz=leads_to_dmz,
+            behind_mode=behind_mode,
+            specific_ref=specific_ref,
+            specific_uid=specific_uid,
+            specific_inline_cidr=specific_inline_cidr,
+            extract_inline_cidr=_extract_inline_cidr,
         )
-        if isinstance(spec_val2, dict):
-            specific_uid = specific_uid or str(spec_val2.get("uid") or "") or None
-            specific_ref = specific_ref or str(spec_val2.get("name") or spec_val2.get("uid") or "") or None
-            specific_inline_cidr = specific_inline_cidr or _extract_inline_cidr(spec_val2)
-        elif isinstance(spec_val2, str) and spec_val2.strip() and not specific_ref:
-            specific_ref = spec_val2.strip()
-        spec_uid2 = (
-            topo_settings.get("leads-to-specific-network-uid")
-            or topo_settings.get("leads_to_specific_network_uid")
-            or topo_settings.get("specific-network-uid")
-            or topo_settings.get("specific_network_uid")
-        )
-        if isinstance(spec_uid2, str) and spec_uid2.strip() and not specific_uid:
-            specific_uid = spec_uid2.strip()
 
     # For CPMI / VSX Virtual System interfaces that provide ipaddr + netmask without an explicit
     # `topology` block, default `behind_mode` to the connected interface IP/netmask.
@@ -417,6 +417,7 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
         route.get("dest")
         or route.get("destination")
         or route.get("subnet")
+        or route.get("subnet4")
         or route.get("address")
         or route.get("network")
     )
@@ -427,25 +428,32 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
 
     mask_from_dest: Any = None
     if isinstance(dest_raw, dict):
-        mask_from_dest = (
-            dest_raw.get("netmask")
-            or dest_raw.get("mask")
-            or dest_raw.get("subnet-mask")
-            or dest_raw.get("mask-length")
-            or dest_raw.get("mask_length")
-            or dest_raw.get("prefix-length")
+        mask_from_dest = _first_present(
+            dest_raw.get("netmask"),
+            dest_raw.get("mask"),
+            dest_raw.get("subnet-mask"),
+            dest_raw.get("mask-length"),
+            dest_raw.get("mask_length"),
+            dest_raw.get("mask-length4"),
+            dest_raw.get("mask_length4"),
+            dest_raw.get("prefix-length"),
         )
         dest_raw = (
             dest_raw.get("ipaddr")
             or dest_raw.get("ipv4-address")
             or dest_raw.get("address")
             or dest_raw.get("subnet")
+            or dest_raw.get("subnet4")
             or dest_raw.get("network")
             or ""
         )
 
     dest_str = str(dest_raw).strip()
-    if not dest_str or dest_str.lower() == "default" or dest_str == "0.0.0.0/0":
+    if not dest_str:
+        if route.get("type") == "default" or route.get("default") is True:
+            return ipaddress.IPv4Network("0.0.0.0/0")
+        return None
+    if dest_str.lower() == "default" or dest_str == "0.0.0.0/0":
         return ipaddress.IPv4Network("0.0.0.0/0")
 
     if "/" in dest_str:
@@ -454,14 +462,16 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
         except ValueError:
             return None
 
-    mask_val = (
-        mask_from_dest
-        or route.get("mask")
-        or route.get("netmask")
-        or route.get("subnet-mask")
-        or route.get("mask-length")
-        or route.get("mask_length")
-        or route.get("prefix-length")
+    mask_val = _first_present(
+        mask_from_dest,
+        route.get("mask"),
+        route.get("netmask"),
+        route.get("subnet-mask"),
+        route.get("mask-length"),
+        route.get("mask_length"),
+        route.get("mask-length4"),
+        route.get("mask_length4"),
+        route.get("prefix-length"),
     )
     if mask_val is None and dest_str == "0.0.0.0":
         return ipaddress.IPv4Network("0.0.0.0/0")

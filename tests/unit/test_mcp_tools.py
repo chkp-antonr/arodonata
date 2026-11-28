@@ -1173,7 +1173,7 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
     - `cpcrud_inverse` requires an `ApplyReport` or applied `plan_id`.
     - `cpcrud_staged_session(action='publish'|'discard')` adopts and publishes/discards staged sessions.
     - `show_object` rejects non-canonical or traversal `obj_type` values.
-    - `api_call` with `ALLOW_WRITE_API=false` permits `where-used` and `verify-policy` and rejects `publish`/`logout`/traversal.
+    - `api_call` with `ALLOW_WRITE_API=false` permits `where-used` and `keepalive` and rejects `verify-policy`/`publish`/`logout`/traversal.
     - `api_call` with `ALLOW_WRITE_API=true` isolates mutating commands in dedicated sessions and caps `timeout <= 300.0`.
     """
     fake_api = MCPFakeApi()
@@ -2056,7 +2056,7 @@ async def test_change_report_invalid_iso_dates_and_structured_tool_failure_core_
         err_json = _parse_tool_json(err_res)
         assert err_json["error"] == "ToolFailure"
         assert err_json["error_code"] == "custom_err"
-        assert err_json["message"] == "bad input secret=s1"
+        assert err_json["message"] == f"bad input secret={REDACTED_PLACEHOLDER}"
         assert err_json["tool"] == "spoof_check_tool"
         assert err_json["safe_key"] == 42
 
@@ -2685,3 +2685,380 @@ async def test_typed_uuid_show_object_cpmi_aliases_and_clamped_show_rulebase() -
         rb_data = _parse_tool_json(rb_res)
         assert rb_data["from"] == 1
         assert rb_data["to"] >= 1
+
+
+@pytest.mark.spec("SCN-MCP-017-1")
+@pytest.mark.asyncio
+async def test_mcp_wave11_list_domains_hint_multidomain_upgrade_asset_roles_and_owner_fair_staged_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-MCP-017-1: Covers DA-022, DA-032, DA-040, DA-049, and DA-054 in MCP tools."""
+    from datetime import UTC, datetime
+
+    from arodonata.core.models.assets import Asset
+    from arodonata.core.models.domains import DomainInfo, DomainSyncState
+    from arodonata.mcp.config import ArodonataMCPSettings
+    from arodonata.mcp.errors import format_invalid_credentials_failure
+    from arodonata.mcp.tools._cache import _upgrade_uninitialized_cache_mode
+
+    # 1. DA-022: format_invalid_credentials_failure references list_domains, never show_domains
+    cred_err = format_invalid_credentials_failure(mgmt_name="mds1", domain="Corp", known_domains=[])
+    assert "call list_domains first" in str(cred_err)
+    assert "show_domains" not in str(cred_err)
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    async with ArodonataClient(settings, api=fake_api) as client:
+        await client.cache.upsert_domains(
+            [
+                DomainInfo(mgmt_name="mds1", uid="d1", name="Corp"),
+                DomainInfo(mgmt_name="mds1", uid="d2", name="UncachedDom"),
+            ]
+        )
+        now = datetime.now(UTC).replace(tzinfo=None)
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "Corp",
+            [],
+            types=["host"],
+            sync_states=[
+                DomainSyncState(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    scope="objects",
+                    item_type="host",
+                    synced_at=now,
+                    status="ok",
+                )
+            ],
+        )
+
+        # 2. DA-049: multi-domain _upgrade_uninitialized_cache_mode upgrades when any requested domain is cold
+        upgraded = await _upgrade_uninitialized_cache_mode(
+            client,
+            "mds1",
+            None,
+            "objects",
+            "cache",
+            domains=["Corp", "UncachedDom"],
+        )
+        assert upgraded == "smart"
+
+        await client.cache.replace_domain_objects(
+            "mds1",
+            "UncachedDom",
+            [],
+            types=["host"],
+            sync_states=[
+                DomainSyncState(
+                    mgmt_name="mds1",
+                    domain_name="UncachedDom",
+                    scope="objects",
+                    item_type="host",
+                    synced_at=now,
+                    status="ok",
+                )
+            ],
+        )
+        still_cached = await _upgrade_uninitialized_cache_mode(
+            client,
+            "mds1",
+            None,
+            "objects",
+            "cache",
+            domains=["Corp", "UncachedDom"],
+        )
+        assert still_cached == "cache"
+
+        # 3. DA-040 & DA-054: list_objects/list_services parity + list_assets/query_objects roles/platforms filters
+        cluster = Asset.from_cp_dict(
+            "mds1",
+            "Corp",
+            {"uid": "cl-1", "name": "corp-cl", "type": "simple-cluster", "os-name": "Gaia"},
+        )
+        member = Asset.from_cp_dict(
+            "mds1",
+            "Corp",
+            {
+                "uid": "mem-1",
+                "name": "corp-mem-1",
+                "type": "cluster-member",
+                "os-name": "Gaia",
+                "hardware": "Maestro MHO-175",
+            },
+        )
+        member = member.model_copy(update={"parent_uid": "cl-1", "parent_name": "corp-cl"})
+        cluster = cluster.model_copy(update={"member_uids": ["mem-1"]})
+        emb_gw = Asset.from_cp_dict(
+            "mds1",
+            "Corp",
+            {
+                "uid": "gw-emb",
+                "name": "branch-spark",
+                "type": "simple-gateway",
+                "os-name": "Gaia Embedded",
+                "hardware": "Quantum Spark 1590",
+            },
+        )
+        await client.cache.replace_domain_assets(
+            "mds1",
+            "Corp",
+            [cluster, member, emb_gw],
+            sync_states=[
+                DomainSyncState(
+                    mgmt_name="mds1",
+                    domain_name="Corp",
+                    scope="assets",
+                    item_type="*",
+                    synced_at=now,
+                    status="ok",
+                    object_count=3,
+                )
+            ],
+        )
+        await client.refresh_objects(mgmt_name="mds1", domains=["Corp"])
+        await client.refresh_services(mgmt_name="mds1", domains=["Corp"])
+
+        mcp_settings = ArodonataMCPSettings(cpcrud=True, enable_write_tools=True)
+        server = create_mcp_server(client, auth_mode="host", mcp_settings=mcp_settings)
+
+        objs_res = await server.call_tool(
+            "list_objects", {"mgmt_name": "mds1", "domain": "Corp", "types": ["host"], "cache_mode": "cache"}
+        )
+        assert objs_res.is_error is False
+        assert _parse_tool_json(objs_res)["total"] >= 1
+
+        svcs_res = await server.call_tool(
+            "list_services", {"mgmt_name": "mds1", "domain": "Corp", "types": ["tcp"], "cache_mode": "cache"}
+        )
+        assert svcs_res.is_error is False
+        assert _parse_tool_json(svcs_res)["total"] >= 1
+
+        la_role = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {"mgmt_name": "mds1", "domain": "Corp", "roles": ["cluster_member"], "cache_mode": "cache"},
+            )
+        )
+        assert [o["name"] for o in la_role["objects"]] == ["corp-mem-1"]
+
+        la_parent_plat = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {
+                    "mgmt_name": "mds1",
+                    "domain": "Corp",
+                    "parent": "corp-cl",
+                    "platforms": ["maestro"],
+                    "cache_mode": "cache",
+                },
+            )
+        )
+        assert [o["name"] for o in la_parent_plat["objects"]] == ["corp-mem-1"]
+
+        qo_exec = _parse_tool_json(
+            await server.call_tool(
+                "query_objects",
+                {
+                    "mgmt_name": "mds1",
+                    "domain": "Corp",
+                    "platforms": ["gaia_embedded"],
+                    "is_policy_target": True,
+                    "is_execution_target": True,
+                    "cache_mode": "cache",
+                },
+            )
+        )
+        assert [o["name"] for o in qo_exec["objects"]] == ["branch-spark"]
+
+        # 4. DA-032: Staged session registry never lets a 3rd caller evict single-session peers,
+        # while preferring greedy owners (>1 slot) before rejecting.
+        tpl_base = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "H_fair_stage", "ipv4-address": "10.9.9.10"}],
+        }
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        with user_context(user_id="PEER_A", client_id="PEER_A"):
+            plan_a = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_base}))
+            fake_api.staged_uid_sequence.append("sess-peer-a")
+            app_a = await server.call_tool(
+                "cpcrud_apply", {"plan_id": plan_a["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert app_a.is_error is False
+
+        with user_context(user_id="PEER_B", client_id="PEER_B"):
+            plan_b = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_base}))
+            fake_api.staged_uid_sequence.append("sess-peer-b1")
+            app_b1 = await server.call_tool(
+                "cpcrud_apply", {"plan_id": plan_b["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert app_b1.is_error is False
+
+        with user_context(user_id="PEER_C", client_id="PEER_C"):
+            plan_c = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_base}))
+            fake_api.staged_uid_sequence.append("sess-peer-c-rejected")
+            discards_before = len([c for c in fake_api.calls if c[1] == "discard"])
+            app_c_full = await server.call_tool(
+                "cpcrud_apply", {"plan_id": plan_c["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert app_c_full.is_error is True
+            assert "Staged session registry is full" in _get_tool_text(app_c_full)
+            assert len([c for c in fake_api.calls if c[1] == "discard"]) >= discards_before + 1
+
+        # Raise cap to 3, let PEER_B take a 2nd slot (now PEER_A=1, PEER_B=2 -> full at 3),
+        # then PEER_C evicts PEER_B's oldest slot rather than PEER_A's sole slot.
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 3)
+        with user_context(user_id="PEER_B", client_id="PEER_B"):
+            fake_api.staged_uid_sequence.append("sess-peer-b2")
+            app_b2 = await server.call_tool(
+                "cpcrud_apply", {"plan_id": plan_b["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert app_b2.is_error is False
+
+        with user_context(user_id="PEER_C", client_id="PEER_C"):
+            fake_api.staged_uid_sequence.append("sess-peer-c-ok")
+            app_c_ok = await server.call_tool(
+                "cpcrud_apply", {"plan_id": plan_c["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert app_c_ok.is_error is False
+
+        with user_context(user_id="PEER_A", client_id="PEER_A"):
+            pub_a = await server.call_tool(
+                "cpcrud_staged_session",
+                {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-peer-a", "action": "publish"},
+            )
+            assert pub_a.is_error is False
+
+
+@pytest.mark.spec("SCN-MCP-018-1")
+@pytest.mark.asyncio
+async def test_scn_mcp_018_1_change_report_session_uid_cap_quota_and_owned_sessions_strip() -> None:
+    """SCN-MCP-018-1: MCP change_report bounds unique session_uids <= 50, charges proportional quota, and strips owned_sessions."""
+    from arodonata.mcp.quota import MCPToolQuotaManager
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        quota_mgr = MCPToolQuotaManager(live_rate_limit_per_minute=10)
+        server = create_mcp_server(client, auth_mode="host", quota_manager=quota_mgr)
+        await client.get_domains("mds1")
+
+        # 1. > 50 unique session_uids is rejected with ToolFailure
+        too_many = await server.call_tool(
+            "change_report",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "session_uids": [f"s-{i}" for i in range(51)],
+            },
+        )
+        assert too_many.is_error is True
+        assert "at most 50 unique session_uids" in _get_tool_text(too_many)
+
+        # 2. Caller-injected owned_sessions in scopes is stripped + multi-session UID charges proportional quota
+        used_before = quota_mgr.live_bucket_count(client_id="anonymous")
+        res_ok = await server.call_tool(
+            "change_report",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "scopes": [
+                    {
+                        "mgmt_name": "mds1",
+                        "domain": "Corp",
+                        "session_uids": ["s-1", "s-2", "s-3"],
+                        "owned_sessions": {
+                            "s-1": {"sid": "INJECTED-OWNED-SID", "server_ip": "192.0.2.99", "session_uid": "s-1"}
+                        },
+                    }
+                ],
+                "format": "json",
+            },
+        )
+        assert res_ok.is_error is False
+        assert not any(
+            c_kw.get("sid") == "INJECTED-OWNED-SID" for *_a, c_kw in fake_api.calls if isinstance(c_kw, dict)
+        )
+        used_after = quota_mgr.live_bucket_count(client_id="anonymous")
+        assert used_after - used_before >= 3
+
+
+@pytest.mark.spec("SCN-MCP-018-2")
+@pytest.mark.asyncio
+async def test_scn_mcp_018_2_atomic_staged_batch_and_list_assets_live_filtering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-MCP-018-2: cpcrud_apply multi-domain staged batch rejects atomically on capacity, and list_assets(cache_mode='live') filters locally."""
+    import arodonata.mcp.tools.cpcrud as cpcrud_mod
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        server = create_mcp_server(client, auth_mode="host", cpcrud=True)
+        await client.get_domains("mds1")
+
+        # 1. Multi-domain staged batch with only 1 free slot (MAX_STORED_PLANS=2, 1 peer present)
+        #    MUST reject atomically and discard BOTH new batch sessions without self-evicting sibling!
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        tpl_single = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "H_peer_slot", "ipv4-address": "10.8.8.1"}],
+        }
+        with user_context(user_id="PEER_EXISTING", client_id="PEER_EXISTING"):
+            p_peer = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_single}))
+            fake_api.staged_uid_sequence.append("sess-existing-peer")
+            r_peer = await server.call_tool(
+                "cpcrud_apply", {"plan_id": p_peer["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert r_peer.is_error is False
+
+        tpl_two_dom = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "operations": [
+                {"operation": "add", "domain": "Corp", "type": "host", "name": "H_d1", "ipv4-address": "10.8.8.2"},
+                {"operation": "add", "domain": "Global", "type": "host", "name": "H_d2", "ipv4-address": "10.8.8.3"},
+            ],
+        }
+        with user_context(user_id="BATCH_CALLER", client_id="BATCH_CALLER"):
+            p_batch = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_two_dom}))
+            fake_api.staged_uid_sequence.extend(["sess-batch-1", "sess-batch-2"])
+            discards_before = len([c for c in fake_api.calls if c[1] == "discard"])
+            r_batch = await server.call_tool(
+                "cpcrud_apply", {"plan_id": p_batch["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert r_batch.is_error is True
+            assert "Staged session registry is full" in _get_tool_text(r_batch)
+            discards_after = len([c for c in fake_api.calls if c[1] == "discard"])
+            assert discards_after - discards_before >= 2
+
+        # Existing peer's sole staged session must still be publishable!
+        with user_context(user_id="PEER_EXISTING", client_id="PEER_EXISTING"):
+            r_pub = await server.call_tool(
+                "cpcrud_staged_session",
+                {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-existing-peer", "action": "publish"},
+            )
+            assert r_pub.is_error is False
+
+        # 2. list_assets(..., cache_mode="live") applies types, roles, platforms, and filter locally
+        live_filtered = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {
+                    "mgmt_name": "mds1",
+                    "domain": "Corp",
+                    "types": ["gateway"],
+                    "roles": ["gateway"],
+                    "filter": "corp-gw",
+                    "cache_mode": "live",
+                },
+            )
+        )
+        assert live_filtered["source"] == "live"
+        assert [o["name"] for o in live_filtered["objects"]] == ["corp-gw-01"]

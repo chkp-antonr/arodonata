@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime
+from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlmodel import col
 
 from arodonata.adapters.storage.cache._base import SqlCacheBase
@@ -23,6 +25,19 @@ from arodonata.core.models.domains import DomainSyncState
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
 from arodonata.core.telemetry import span_attrs, traced
+
+_VSX_LINK_UPDATE_COLUMNS: frozenset[str] = frozenset(
+    {
+        "parent_uid",
+        "parent_name",
+        "parent_id",
+        "parent_asset_id",
+        "virtual_system_uids",
+        "virtual_system_asset_ids",
+        "interfaces",
+        "raw_data",
+    }
+)
 
 
 class InventoryCacheMixin(SqlCacheBase):
@@ -412,3 +427,36 @@ class InventoryCacheMixin(SqlCacheBase):
             await self._dialect_upsert(session, AssetRecord, rows)
             await session.commit()
         return len(assets)
+
+    @traced
+    async def update_assets_vsx_links(
+        self,
+        patches: Sequence[tuple[str, datetime, Mapping[str, Any]]],
+    ) -> int:
+        """Conditionally update VSX-linking columns on existing `arodonata_assets` rows.
+
+        Each patch is `(row_id, expected_updated_at, column_values)`. Only existing rows whose
+        `updated_at` matches `expected_updated_at` are updated, preventing concurrent per-domain
+        asset refreshes from being clobbered or deleted assets from being resurrected.
+        """
+        if not patches:
+            return 0
+        span_attrs(count=len(patches))
+        updated_rows = 0
+        async with self._db.session() as session:
+            for row_id, expected_updated_at, col_values in patches:
+                safe_values = {k: v for k, v in col_values.items() if k in _VSX_LINK_UPDATE_COLUMNS}
+                if not safe_values:
+                    continue
+                stmt = (
+                    update(AssetRecord)
+                    .where(
+                        AssetRecord.id == row_id,  # type: ignore[arg-type]
+                        AssetRecord.updated_at == expected_updated_at,  # type: ignore[arg-type]
+                    )
+                    .values(**safe_values)
+                )
+                res = await session.execute(stmt)
+                updated_rows += int(getattr(res, "rowcount", 0) or 0)
+            await session.commit()
+        return updated_rows

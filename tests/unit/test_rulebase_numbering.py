@@ -865,3 +865,241 @@ def test_locate_rules_preserves_package_prefix_for_empty_global_placeholder_and_
     assert len(locs.layer_prefixes["UnnamedInline"]) == 1
     assert locs.layer_prefixes["UnnamedInline"][0].context == "package"
     assert locs.layer_prefixes["UnnamedInline"][0].prefix == "1."
+
+
+@pytest.mark.spec("SCN-RULE-010-1")
+@pytest.mark.asyncio
+async def test_scn_rule_010_1_case_insensitive_lookup_placeholder_precedence_and_decomposed_pager() -> None:
+    """SCN-RULE-010-1: exact-first + CI fallback, placeholder_domain_layer_uid precedence, and decomposed fetch_paged_rulebase."""
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.models.rulebase import DomainRulebaseSnapshot
+    from arodonata.rulebase.numbering import locate_rules_in_snapshot, number_package_rulebase
+    from arodonata.rulebase.pager import (
+        _build_rulebase_page_payload,
+        _materialize_paged_rulebase,
+        _RulebasePageAccumulator,
+        fetch_paged_rulebase,
+    )
+    from arodonata.rulebase.source import CachedRulebaseSource
+
+    # 1. Placeholder rule with both inline_layer_uid and distinct target placeholder_domain_layer_uid
+    snap = DomainRulebaseSnapshot(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        package_layers=[
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-a",
+                package_name="Pkg_A",
+                rulebase_type="access",
+                layer_uid="l-global",
+                layer_name="Global",
+                position=1,
+            ),
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-a",
+                package_name="Pkg_A",
+                rulebase_type="access",
+                layer_uid="l-dom-a",
+                layer_name="Dom_A",
+                position=2,
+            ),
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-b",
+                package_name="Pkg_B",
+                rulebase_type="access",
+                layer_uid="l-global",
+                layer_name="Global",
+                position=1,
+            ),
+            RulebasePackageLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                package_uid="pkg-b",
+                package_name="Pkg_B",
+                rulebase_type="access",
+                layer_uid="l-dom-b",
+                layer_name="Dom_B",
+                position=2,
+            ),
+        ],
+        layers=[
+            RulebaseLayerEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                uid="l-global",
+                name="Global",
+                rulebase_type="access",
+                is_global=True,
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-dom-a", name="Dom_A", rulebase_type="access"
+            ),
+            RulebaseLayerEntry(
+                mgmt_name="mds1", domain_name="Corp", uid="l-dom-b", name="Dom_B", rulebase_type="access"
+            ),
+        ],
+        access_rules=[
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-global",
+                layer_name="Global",
+                uid="r-ph-multi",
+                name="PlaceholderMulti",
+                rule_type="place-holder",
+                position=1,
+                inline_layer_uid="l-dom-a",
+                inline_layer_name="Dom_A",
+                placeholder_domain_layer_uid="l-dom-a",
+            ),
+            AccessRuleEntry(
+                mgmt_name="mds1",
+                domain_name="Corp",
+                layer_uid="l-dom-a",
+                layer_name="Dom_A",
+                uid="r-dom-a-1",
+                name="DomARule1",
+                position=1,
+            ),
+        ],
+    )
+
+    # Case-insensitive package lookup works for number_package_rulebase and locate_rules_in_snapshot
+    pkg_b = number_package_rulebase(snap, "pkg_b", rulebase_type="access")
+    assert pkg_b.package_uid == "pkg-b"
+    assert pkg_b.package_name == "Pkg_B"
+
+    locs = locate_rules_in_snapshot(snap, layer_uids=["l-dom-b", "l-dom-a"])
+    assert "l-dom-b" in locs.layer_prefixes
+    assert any(
+        p.context == "package" and p.package_uid == "pkg-b" and p.prefix == "1." for p in locs.layer_prefixes["l-dom-b"]
+    )
+    # l-dom-a must NOT be falsely attributed to pkg-b!
+    assert all(p.package_uid != "pkg-b" for p in locs.layer_prefixes.get("l-dom-a", []))
+
+    # 2. CachedRulebaseSource._resolve_domain_for_target prefers exact match over CI fallback
+    class _CiCache:
+        async def get_domains(self, mgmt_name: str, **_kw: Any) -> list[Any]:
+            from arodonata.core.models.domains import DomainInfo
+
+            return [
+                DomainInfo(mgmt_name=mgmt_name, uid="d1", name="DomLower", active_ip="10.0.0.1"),
+                DomainInfo(mgmt_name=mgmt_name, uid="d2", name="DomExact", active_ip="10.0.0.2"),
+            ]
+
+        async def list_sync_states(self, *_a: Any, **_kw: Any) -> list[Any]:
+            return []
+
+        async def get_domain_rulebase_packages(self, _m: str, dom: str, **_kw: Any) -> DomainRulebaseSnapshot:
+            pkg_name = "branch_pkg" if dom == "DomLower" else "Branch_Pkg"
+            return DomainRulebaseSnapshot(
+                mgmt_name="mds1",
+                domain_name=dom,
+                package_layers=[
+                    RulebasePackageLayerEntry(
+                        mgmt_name="mds1",
+                        domain_name=dom,
+                        package_uid=f"uid-{dom}",
+                        package_name=pkg_name,
+                        rulebase_type="access",
+                        layer_uid=f"l-{dom}",
+                        layer_name="Network",
+                        position=1,
+                    )
+                ],
+            )
+
+        async def get_domain_rulebase(self, _m: str, dom: str, **_kw: Any) -> DomainRulebaseSnapshot:
+            return await self.get_domain_rulebase_packages(_m, dom)
+
+    src = CachedRulebaseSource(cache=_CiCache())  # type: ignore[arg-type]
+    assert await src._resolve_domain_for_target("mds1", None, "Branch_Pkg", kind="package") == "DomExact"
+
+    # 3. Decomposed fetch_paged_rulebase helpers handle mid-fetch total drift restart cleanly
+    payload = _build_rulebase_page_payload(
+        rulebase_type="access",
+        page_limit=50,
+        offset=0,
+        details_level="standard",
+        use_object_dictionary=True,
+        target_layer_uid="l-1",
+        target_layer_name="Net",
+        package_uid="p-1",
+        package_name="Pkg",
+        extra_payload={"filter": "test"},
+    )
+    assert payload["limit"] == 50
+    assert payload["uid"] == "l-1"
+    assert payload["filter"] == "test"
+
+    calls = {"n": 0}
+
+    class _DriftPagerApi:
+        async def api_call(self, _m: str, _c: str, p: dict[str, Any], **_kw: Any) -> ApiCallResult:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "l-1",
+                        "name": "Net",
+                        "total": 2,
+                        "to": 1,
+                        "rulebase": [{"uid": "r-stale", "name": "Stale", "type": "access-rule"}],
+                    },
+                )
+            if calls["n"] == 2:
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "l-1",
+                        "name": "Net",
+                        "total": 1,
+                        "to": 1,
+                        "rulebase": [],
+                    },
+                )
+            if calls["n"] == 3:
+                return ApiCallResult(
+                    success=True,
+                    data={
+                        "uid": "l-1",
+                        "name": "Net",
+                        "total": 1,
+                        "to": 1,
+                        "rulebase": [
+                            {
+                                "uid": "sec-1",
+                                "name": "Main",
+                                "type": "access-section",
+                                "from": 1,
+                                "to": 1,
+                                "rulebase": [{"uid": "r-fresh", "name": "Fresh", "type": "access-rule"}],
+                            }
+                        ],
+                    },
+                )
+            return ApiCallResult(
+                success=True,
+                data={"uid": "l-1", "name": "Net", "total": 1, "to": 1, "rulebase": []},
+            )
+
+    paged = await fetch_paged_rulebase(
+        _DriftPagerApi(),  # type: ignore[arg-type]
+        "mds1",
+        "Corp",
+        rulebase_type="access",
+        layer_uid="l-1",
+        layer_name="Net",
+        limit=1,
+    )
+    assert [r.uid for r in paged.access_rules] == ["r-fresh"]
+    assert len(paged.sections) == 1
+    assert paged.sections[0].rule_uids == ["r-fresh"]
+    assert callable(_RulebasePageAccumulator.reset) and callable(_materialize_paged_rulebase)
