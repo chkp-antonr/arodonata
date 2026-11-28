@@ -1114,3 +1114,126 @@ async def test_vsx_parent_list_slot_objects_and_cluster_pass2_exclude_members_an
     c_enriched = {a.uid: a for a in cluster_mgr.enrich([cluster, vs_pointing_cluster, self_member])}
     assert "vs-cl-1" not in c_enriched["cl-1"].member_uids
     assert "cl-1" not in c_enriched["cl-1"].member_uids
+
+
+@pytest.mark.spec("SCN-CACHE-021-2")
+async def test_partial_vsx_reconciliation_race_safety_and_cluster_vs_exclusions() -> None:
+    """SCN-CACHE-021-2: Cross-domain VSX updates only VSX columns conditionally; VS excluded from cluster members."""
+    from datetime import datetime, timedelta
+
+    from arodonata.adapters.storage.cache import SqlCacheAdapter
+    from arodonata.adapters.storage.database import DatabaseManager
+    from arodonata.adapters.storage.lock_adapter import SqlLockAdapter
+    from arodonata.core.config import ArodonataSettings
+    from arodonata.core.models.domains import DomainInfo
+    from arodonata.core.services._asset_linking import ClusterRelationshipManager
+    from arodonata.core.services.asset_service import AssetRefreshService
+    from arodonata.core.services.domain_service import DomainService
+    from arodonata.core.services.sync_coordinator import DomainSyncCoordinator
+
+    # 1. ClusterRelationshipManager Pass 1 excludes Virtual Systems (both inline and existing)
+    cluster_mgr = ClusterRelationshipManager()
+    cl_parent = Asset.from_cp_dict(
+        "mds1",
+        "VSX-Dom",
+        {
+            "uid": "cl-vsx-1",
+            "name": "cl-vsx",
+            "type": "vsx-cluster",
+            "members": [
+                {"uid": "mem-1", "name": "mem-1", "type": "vsx-cluster-member"},
+                {"uid": "vs-inline", "name": "vs-inline", "type": "virtual-system"},
+                {"uid": "vs-existing", "name": "vs-existing", "type": "CpmiVsNetobj"},
+            ],
+        },
+    )
+    vs_existing = Asset.from_cp_dict(
+        "mds1", "VSX-Dom", {"uid": "vs-existing", "name": "vs-existing", "type": "virtual-system"}
+    )
+    enriched_pass1 = {a.uid: a for a in cluster_mgr.enrich([cl_parent, vs_existing])}
+    assert enriched_pass1["cl-vsx-1"].member_uids == ["mem-1"]
+    assert "vs-inline" not in enriched_pass1
+    assert enriched_pass1["vs-existing"].parent_uid is None
+
+    # 2. _build_cross_domain_find_by_ref excludes vsx-cluster-member from VSX parent candidates
+    vsx_mgr = VSXRelationshipManager(_NoopApi())
+    vsx_member_same_name = Asset.from_cp_dict(
+        "mds1", "VSX-Dom", {"uid": "mem-same", "name": "SharedVSX", "type": "vsx-cluster-member"}
+    )
+    vsx_cluster_real = Asset.from_cp_dict(
+        "mds1", "VSX-Dom", {"uid": "cl-real", "name": "SharedVSX", "type": "vsx-cluster"}
+    )
+    vs_child = Asset.from_cp_dict(
+        "mds1",
+        "TenantA",
+        {"uid": "vs-a1", "name": "VS_A1", "type": "virtual-system", "vsx-gateway": "SharedVSX"},
+    )
+    reconciled = {a.uid: a for a in vsx_mgr.reconcile_cross_domain([vsx_member_same_name, vsx_cluster_real, vs_child])}
+    assert reconciled["vs-a1"].parent_uid == "cl-real"
+
+    # 3. Race-free partial-column VSX reconciliation never resurrects deleted rows or clobbers concurrent updates
+    t0 = datetime(2026, 11, 28, 12, 0, 0)
+    t1 = t0 + timedelta(seconds=5)
+    db = DatabaseManager()
+    await db.initialize()
+    cache = SqlCacheAdapter(db)
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+    api = _NoopApi()
+    ds = DomainService(settings=settings, api=api, cache=cache, now_fn=lambda: t0)  # type: ignore[arg-type]
+    coord = DomainSyncCoordinator(
+        settings=settings,
+        api=api,
+        cache=cache,
+        lock_port=SqlLockAdapter(db),
+        domain_service=ds,
+        now_fn=lambda: t0,  # type: ignore[arg-type]
+    )
+    svc = AssetRefreshService(settings=settings, api=api, cache=cache, coordinator=coord, now_fn=lambda: t0)  # type: ignore[arg-type]
+
+    vsx_gw = Asset.from_cp_dict(
+        "mds1",
+        "VSX-Dom",
+        {
+            "uid": "vsx-gw-1",
+            "name": "VSX_GW",
+            "type": "vsx-cluster",
+            "virtual-systems": [{"uid": "vs-t1", "name": "VS_1"}],
+        },
+    ).model_copy(update={"updated_at": t0})
+    vs_stale = Asset.from_cp_dict(
+        "mds1", "TenantA", {"uid": "vs-t1", "name": "VS_1", "type": "virtual-system", "ipv4-address": "10.0.0.10"}
+    ).model_copy(update={"updated_at": t0})
+    vs_deleted = Asset.from_cp_dict(
+        "mds1", "TenantA", {"uid": "vs-del", "name": "VS_Del", "type": "virtual-system", "vsx-gateway": "VSX_GW"}
+    ).model_copy(update={"updated_at": t0})
+    await cache.upsert_domains([DomainInfo(mgmt_name="mds1", uid="d-vsx", name="VSX-Dom")])
+    await cache.replace_domain_assets("mds1", "VSX-Dom", [vsx_gw])
+    await cache.replace_domain_assets("mds1", "TenantA", [vs_stale, vs_deleted])
+
+    # Intercept cache.get_assets once to simulate concurrent TenantA replace between get_assets and write
+    orig_get_assets = cache.get_assets
+    injected = False
+
+    async def _racing_get_assets(*args: Any, **kwargs: Any) -> list[Asset]:
+        nonlocal injected
+        rows = await orig_get_assets(*args, **kwargs)
+        if not injected:
+            injected = True
+            vs_fresh = Asset.from_cp_dict(
+                "mds1",
+                "TenantA",
+                {"uid": "vs-t1", "name": "VS_1", "type": "virtual-system", "ipv4-address": "10.0.0.99"},
+            ).model_copy(update={"updated_at": t1})
+            await cache.replace_domain_assets("mds1", "TenantA", [vs_fresh])
+        return rows
+
+    cache.get_assets = _racing_get_assets  # type: ignore[method-assign]
+    await svc._reconcile_cross_domain_vsx_for_mgmt("mds1")
+    cache.get_assets = orig_get_assets  # type: ignore[method-assign]
+
+    tenant_rows = {a.uid: a for a in await cache.get_assets("mds1", "TenantA")}
+    assert "vs-del" not in tenant_rows  # Deleted asset was NOT resurrected
+    assert tenant_rows["vs-t1"].ipv4_address == "10.0.0.99"  # Concurrent refresh NOT clobbered
+    vsx_rows = {a.uid: a for a in await cache.get_assets("mds1", "VSX-Dom")}
+    assert "vs-t1" in vsx_rows["vsx-gw-1"].virtual_system_uids  # Uncontested VSX-Dom row updated
+    await db.close()

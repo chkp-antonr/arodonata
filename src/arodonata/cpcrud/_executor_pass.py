@@ -20,7 +20,7 @@ from arodonata.core.context import (
     update_overlay_from_command,
     write_session_context,
 )
-from arodonata.core.errors import ServerIdentityError, redact_sid
+from arodonata.core.errors import CacheError, ServerIdentityError, redact_sid
 from arodonata.core.events import (
     CPCRUDActionEvent,
     CPCRUDDomainPublishedEvent,
@@ -39,6 +39,9 @@ from arodonata.cpcrud._executor_helpers import (
     _select_staged_eviction_key,
     check_current_domain_head,
     resolve_allowlisted_command,
+)
+from arodonata.cpcrud._executor_helpers import (
+    _resolve_executor_owner_key as _resolve_executor_owner_key,
 )
 from arodonata.cpcrud._planner_helpers import _extract_group_references, _extract_rule_references
 from arodonata.cpcrud.models import (
@@ -131,7 +134,15 @@ async def _register_staged_session(
         while len(staged_registry) > 256:
             evict_key = _select_staged_eviction_key(staged_registry, owner_key, exclude_key=st_key)
             if evict_key is None:
-                break
+                staged_registry.pop(st_key, None)
+                if staged_sessions and staged_sessions[-1] is staged_info:
+                    staged_sessions.pop()
+                ws.discarded = True
+                await _discard_and_logout_staged_info(api, staged_info)
+                raise CacheError(
+                    "Executor staged session registry is full (256 distinct single-session callers); "
+                    "publish or discard an existing staged session before staging another."
+                )
             await _discard_and_logout_staged_info(api, staged_registry.pop(evict_key))
     return session_uid, resolved_name
 
@@ -411,7 +422,7 @@ async def _execute_domain_batch(
                 staged_sessions,
                 staged_registry,
                 stamp=stamp,
-                owner_key=resolved_auth.identity_key if resolved_auth is not None else "",
+                owner_key=_resolve_executor_owner_key(resolved_auth, resolved_user),
             )
             registration_ok = True
         with write_session_context(ws):

@@ -222,3 +222,36 @@ async def test_nested_list_sanitization_api_call_result_repr_overlay_and_chained
     assert exc_info.value.__cause__ is not None
     assert "chained_cause_sid_55555" not in str(exc_info.value.__cause__)
     assert REDACTED_PLACEHOLDER in str(exc_info.value.__cause__)
+
+
+@pytest.mark.spec("SCN-SESS-016-1")
+def test_overlay_recursively_strips_nested_sensitive_keys_and_sids() -> None:
+    """SCN-SESS-016-1: update_overlay_from_command strips nested sensitive keys and redacts SIDs."""
+    from arodonata.core.context import SessionOverlay
+    from arodonata.core.context import update_overlay_from_command as _update_overlay
+    from arodonata.core.models.common import ApiCallResult
+
+    overlay = SessionOverlay(mgmt_name="mds1", domain_name="Corp")
+    _update_overlay(
+        overlay,
+        "add-simple-cluster",
+        {
+            "name": "cl1",
+            "members": [
+                {"name": "m1", "one-time-password": "nested_otp_secret", "note": "X-chkp-sid: nested_hdr_sid"},
+            ],
+            "shared-secrets": [{"external-gateway": "gw2", "shared-secret": "nested_psk_secret"}],
+        },
+        ApiCallResult(
+            success=True,
+            status_code=200,
+            data={"uid": "cl-uid-1", "name": "cl1", "comments": "sid=resp_bare_sid"},
+        ),
+    )
+    stored = overlay.upserted_objects["cl-uid-1"]
+    assert "one-time-password" not in stored.raw_data["members"][0]
+    assert "shared-secret" not in stored.raw_data["shared-secrets"][0]
+    assert "nested_otp_secret" not in repr(stored)
+    assert "nested_psk_secret" not in repr(stored)
+    assert "nested_hdr_sid" not in repr(stored)
+    assert "resp_bare_sid" not in repr(stored)

@@ -327,7 +327,7 @@ async def find_affected_gateways(
             gw_entries,
             has_live_routes,
             ann_by_if_cidr,
-            _,
+            ann_by_if_wildcard,
             gw_trust_static,
             if_trust_static,
         ) = _build_effective_gateway_entries(
@@ -406,6 +406,7 @@ async def find_affected_gateways(
                 external_if_names=external_if_names,
                 has_live_routes=has_live_routes,
                 ann_by_if_cidr=ann_by_if_cidr,
+                ann_by_if_wildcard=ann_by_if_wildcard,
                 weights=weights,
                 gw_trust_static=gw_trust_static,
                 if_trust_static=if_trust_static,

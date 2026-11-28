@@ -104,6 +104,64 @@ class ParsedCliRoute:
     protocol_label: str
 
 
+def _vsid_lookup_awk_snippet(*, indent: str = "") -> str:
+    """Return the `vsx stat -l` VSID-by-name lookup command fragment."""
+    return (
+        f'{indent}vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
+        '\'/^VSID:/ {id=$2} /^Name:[ \\t]*/ {sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); if ($0 == target) {print id; exit}}\')\n'
+        f'{indent}case "$vsid" in\n'
+        f'{indent}  ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
+        f"{indent}esac\n"
+    )
+
+
+def _vsenv_verify_snippet(*, indent: str = "") -> str:
+    """Return the `vsenv "$vsid"` + `CTX%05d` `$FWDIR` verification fragment."""
+    return (
+        f'{indent}ctx=$(printf "CTX%05d" "$vsid")\n'
+        f'{indent}if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
+        f'{indent}  echo "_vs_error=vsenv $vsid failed"\n'
+        f"{indent}  exit 1\n"
+        f"{indent}fi\n"
+        f'{indent}case "$FWDIR" in\n'
+        f'{indent}  *"$ctx"*) ;;\n'
+        f'{indent}  *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
+        f"{indent}esac\n"
+    )
+
+
+def _ip_limit_awk_expr(limit_expr: str) -> str:
+    return (
+        f"ip -4 route show 2>/dev/null </dev/null | awk -v lim={limit_expr} "
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+    )
+
+
+def _ip_and_clish_route_snippet(
+    *,
+    limit_expr: str,
+    skip_threshold_expr: str,
+    indent: str = "",
+) -> str:
+    """Return the bounded `ip -4 route show` + conditional `clish -c "show route"` fragment."""
+    return (
+        f'{indent}echo "===ARODONATA_IP_ROUTE_START==="\n'
+        f"{indent}_ip_rc=0\n"
+        f"{indent}ip -4 route show 2>/dev/null </dev/null | awk -v lim={limit_expr} -v thr={skip_threshold_expr} "
+        f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
+        "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
+        f'{indent}echo "===ARODONATA_IP_ROUTE_END==="\n'
+        f'{indent}if [ "$_ip_rc" -eq 42 ]; then\n'
+        f'{indent}  echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
+        f"{indent}else\n"
+        f'{indent}  echo "===ARODONATA_CLISH_ROUTE_START==="\n'
+        f'{indent}  clish -c "show route" 2>/dev/null </dev/null | awk -v lim={limit_expr} '
+        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        f'{indent}  echo "===ARODONATA_CLISH_ROUTE_END==="\n'
+        f"{indent}fi\n"
+    )
+
+
 def build_route_collection_script(
     vsid: int | None = None,
     vs_name: str | None = None,
@@ -121,26 +179,13 @@ def build_route_collection_script(
     """
     eff_limit = int(max_routes) if max_routes is not None and int(max_routes) > 0 else None
     if eff_limit is not None:
-        ip_cmd = (
-            f"ip -4 route show 2>/dev/null </dev/null | awk -v lim={eff_limit} "
-            f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
-        )
+        ip_cmd = _ip_limit_awk_expr(str(eff_limit))
     else:
         ip_cmd = "ip -4 route show 2>/dev/null </dev/null || true\n"
 
     if vsid is not None and vsid > 0:
         return (
-            f"vsid={int(vsid)}\n"
-            'ctx=$(printf "CTX%05d" "$vsid")\n'
-            'if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
-            '  echo "_vs_error=vsenv $vsid failed"\n'
-            "  exit 1\n"
-            "fi\n"
-            'case "$FWDIR" in\n'
-            '  *"$ctx"*) ;;\n'
-            '  *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
-            "esac\n"
-            'echo "===ARODONATA_IP_ROUTE_START==="\n'
+            f"vsid={int(vsid)}\n" + _vsenv_verify_snippet() + 'echo "===ARODONATA_IP_ROUTE_START==="\n'
             f"{ip_cmd}"
             'echo "===ARODONATA_IP_ROUTE_END==="\n'
         )
@@ -148,43 +193,16 @@ def build_route_collection_script(
         safe_vs_name = shlex.quote(vs_name)
         return (
             f"vs_name={safe_vs_name}\n"
-            'vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
-            '\'/^VSID:/ {id=$2} /^Name:[ \\t]*/ {sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); if ($0 == target) {print id; exit}}\')\n'
-            'case "$vsid" in\n'
-            '  ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
-            "esac\n"
-            'ctx=$(printf "CTX%05d" "$vsid")\n'
-            'if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
-            '  echo "_vs_error=vsenv $vsid failed"\n'
-            "  exit 1\n"
-            "fi\n"
-            'case "$FWDIR" in\n'
-            '  *"$ctx"*) ;;\n'
-            '  *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
-            "esac\n"
-            'echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
+            + _vsid_lookup_awk_snippet()
+            + _vsenv_verify_snippet()
+            + 'echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
             'echo "===ARODONATA_IP_ROUTE_START==="\n'
             f"{ip_cmd}"
             'echo "===ARODONATA_IP_ROUTE_END==="\n'
         )
     if eff_limit is not None:
         skip_thr = min(eff_limit, DEFAULT_CLISH_SKIP_THRESHOLD)
-        return (
-            'echo "===ARODONATA_IP_ROUTE_START==="\n'
-            "_ip_rc=0\n"
-            f"ip -4 route show 2>/dev/null </dev/null | awk -v lim={eff_limit} -v thr={skip_thr} "
-            f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
-            "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
-            'echo "===ARODONATA_IP_ROUTE_END==="\n'
-            'if [ "$_ip_rc" -eq 42 ]; then\n'
-            f'  echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
-            "else\n"
-            '  echo "===ARODONATA_CLISH_ROUTE_START==="\n'
-            f'  clish -c "show route" 2>/dev/null </dev/null | awk -v lim={eff_limit} '
-            f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
-            '  echo "===ARODONATA_CLISH_ROUTE_END==="\n'
-            "fi\n"
-        )
+        return _ip_and_clish_route_snippet(limit_expr=str(eff_limit), skip_threshold_expr=str(skip_thr))
     return (
         'echo "===ARODONATA_IP_ROUTE_START==="\n'
         "ip -4 route show 2>/dev/null </dev/null || true\n"
@@ -252,8 +270,7 @@ def build_route_collection_repository_script(
         '        case "$FWDIR" in\n'
         '          *"$ctx"*)\n'
         '            echo "===ARODONATA_IP_ROUTE_START==="\n'
-        f"            ip -4 route show 2>/dev/null </dev/null | awk -v lim={default_max_routes} "
-        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        f"            {_ip_limit_awk_expr(str(default_max_routes))}"
         '            echo "===ARODONATA_IP_ROUTE_END==="\n'
         "            ;;\n"
         "        esac\n"
@@ -265,21 +282,8 @@ def build_route_collection_repository_script(
         "  else\n"
         f"    max_routes={default_max_routes}\n"
         f"    skip_thr={eff_skip_thr}\n"
-        '    echo "===ARODONATA_IP_ROUTE_START==="\n'
-        "    _ip_rc=0\n"
-        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" -v thr="$skip_thr" '
-        f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
-        "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
-        '    echo "===ARODONATA_IP_ROUTE_END==="\n'
-        '    if [ "$_ip_rc" -eq 42 ]; then\n'
-        f'      echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
-        "    else\n"
-        '      echo "===ARODONATA_CLISH_ROUTE_START==="\n'
-        '      clish -c "show route" 2>/dev/null </dev/null | awk -v lim="$max_routes" '
-        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
-        '      echo "===ARODONATA_CLISH_ROUTE_END==="\n'
-        "    fi\n"
-        "    exit 0\n"
+        + _ip_and_clish_route_snippet(limit_expr='"$max_routes"', skip_threshold_expr='"$skip_thr"', indent="    ")
+        + "    exit 0\n"
         "  fi\n"
         "fi\n"
         'max_routes="${1:-0}"\n'
@@ -292,19 +296,10 @@ def build_route_collection_repository_script(
         '  ""|*[!0-9]*) echo "_vs_error=invalid vsid argument"; exit 1 ;;\n'
         "esac\n"
         'if [ "$vsid" -gt 0 ]; then\n'
-        '  ctx=$(printf "CTX%05d" "$vsid")\n'
-        '  if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
-        '    echo "_vs_error=vsenv $vsid failed"\n'
-        "    exit 1\n"
-        "  fi\n"
-        '  case "$FWDIR" in\n'
-        '    *"$ctx"*) ;;\n'
-        '    *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
-        "  esac\n"
-        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
+        + _vsenv_verify_snippet(indent="  ")
+        + '  echo "===ARODONATA_IP_ROUTE_START==="\n'
         '  if [ "$max_routes" -gt 0 ]; then\n'
-        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" '
-        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        f"    {_ip_limit_awk_expr('"$max_routes"')}"
         "  else\n"
         "    ip -4 route show 2>/dev/null </dev/null || true\n"
         "  fi\n"
@@ -312,25 +307,12 @@ def build_route_collection_repository_script(
         "  exit 0\n"
         "fi\n"
         'if [ -n "$vs_name" ]; then\n'
-        '  vsid=$(vsx stat -l 2>/dev/null </dev/null | awk -v target="$vs_name" '
-        '\'/^VSID:/ {id=$2} /^Name:[ \\t]*/ {sub(/^Name:[ \\t]*/, ""); sub(/[ \\t\\r]+$/, ""); if ($0 == target) {print id; exit}}\')\n'
-        '  case "$vsid" in\n'
-        '    ""|0|*[!0-9]*) echo "_vs_error=unable to resolve vsid for $vs_name"; exit 1 ;;\n'
-        "  esac\n"
-        '  ctx=$(printf "CTX%05d" "$vsid")\n'
-        '  if ! vsenv "$vsid" >/dev/null 2>&1 </dev/null; then\n'
-        '    echo "_vs_error=vsenv $vsid failed"\n'
-        "    exit 1\n"
-        "  fi\n"
-        '  case "$FWDIR" in\n'
-        '    *"$ctx"*) ;;\n'
-        '    *) echo "_vs_error=context not switched (FWDIR=$FWDIR)"; exit 1 ;;\n'
-        "  esac\n"
-        '  echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
+        + _vsid_lookup_awk_snippet(indent="  ")
+        + _vsenv_verify_snippet(indent="  ")
+        + '  echo "===ARODONATA_VSID_RESOLVED=${vsid}==="\n'
         '  echo "===ARODONATA_IP_ROUTE_START==="\n'
         '  if [ "$max_routes" -gt 0 ]; then\n'
-        '    ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" '
-        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
+        f"    {_ip_limit_awk_expr('"$max_routes"')}"
         "  else\n"
         "    ip -4 route show 2>/dev/null </dev/null || true\n"
         "  fi\n"
@@ -342,21 +324,8 @@ def build_route_collection_repository_script(
         '  if [ "$max_routes" -lt "$skip_thr" ]; then\n'
         '    skip_thr="$max_routes"\n'
         "  fi\n"
-        '  echo "===ARODONATA_IP_ROUTE_START==="\n'
-        "  _ip_rc=0\n"
-        '  ip -4 route show 2>/dev/null </dev/null | awk -v lim="$max_routes" -v thr="$skip_thr" '
-        f'\'NR<=lim {{print}} NR==lim+1 {{print "{ROUTE_LIMIT_MARKER}"; exit 42}} '
-        "END {if (NR>thr) exit 42}' || _ip_rc=$?\n"
-        '  echo "===ARODONATA_IP_ROUTE_END==="\n'
-        '  if [ "$_ip_rc" -eq 42 ]; then\n'
-        f'    echo "{CLISH_SKIPPED_LARGE_TABLE_MARKER}"\n'
-        "  else\n"
-        '    echo "===ARODONATA_CLISH_ROUTE_START==="\n'
-        '    clish -c "show route" 2>/dev/null </dev/null | awk -v lim="$max_routes" '
-        f"'NR<=lim {{print}} NR==lim+1 {{print \"{ROUTE_LIMIT_MARKER}\"; exit}}' || true\n"
-        '    echo "===ARODONATA_CLISH_ROUTE_END==="\n'
-        "  fi\n"
-        "else\n"
+        + _ip_and_clish_route_snippet(limit_expr='"$max_routes"', skip_threshold_expr='"$skip_thr"', indent="  ")
+        + "else\n"
         '  echo "===ARODONATA_IP_ROUTE_START==="\n'
         "  ip -4 route show 2>/dev/null </dev/null || true\n"
         '  echo "===ARODONATA_IP_ROUTE_END==="\n'

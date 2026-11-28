@@ -434,3 +434,18 @@ def is_unsupported_script_command_error(error_code: str | None, error_message: s
     if any(tok in low_msg for tok in _UNSUPPORTED_SCRIPT_COMMAND_TOKENS):
         return True
     return "api command" in low_msg and "not found" in low_msg
+
+
+def is_not_found_error(
+    status_code: int,
+    error_code: str | None,
+    error_message: str | None,
+) -> bool:
+    """Return `True` if a Check Point API response specifically indicates 'object not found'."""
+    if status_code == 404:
+        return True
+    code_low = (error_code or "").strip().lower()
+    msg_low = (error_message or "").strip().lower()
+    if "not_found" in code_low or "not found" in msg_low:
+        return True
+    return "requested object" in msg_low and "not found" in msg_low

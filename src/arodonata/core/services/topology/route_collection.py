@@ -313,13 +313,16 @@ async def _finalize_domain_route_sync_states(
     if not gw_tokens:
         for (m_name, d_name), total_cnt in routes_count_by_dom.items():
             errs = failed_by_dom.get((m_name, d_name), [])
+            prev_state = await cache.get_sync_state(m_name, d_name, "topology", "routes") if errs else None
             await cache.upsert_sync_state(
                 DomainSyncState(
                     mgmt_name=m_name,
                     domain_name=d_name,
                     scope="topology",
                     item_type="routes",
-                    synced_at=now,
+                    last_published_at=prev_state.last_published_at if (errs and prev_state) else None,
+                    last_session_uid=prev_state.last_session_uid if (errs and prev_state) else None,
+                    synced_at=(prev_state.synced_at if prev_state else None) if errs else now,
                     status="failed" if errs else "ok",
                     object_count=total_cnt,
                     last_error="; ".join(errs) if errs else None,
@@ -418,7 +421,6 @@ async def collect_gateway_routes(
             get_node_lock=get_node_lock,
             get_semaphore=get_semaphore,
             mgmt_name=mgmt_name,
-            domain=domain,
             domain_set=domain_set,
             gw_tokens=gw_tokens,
             include_global=include_global,
@@ -446,7 +448,6 @@ async def _collect_gateway_routes_impl(
     get_node_lock: Callable[[str, str], asyncio.Lock],
     get_semaphore: Callable[[str, int], asyncio.Semaphore],
     mgmt_name: str | None,
-    domain: str | None,
     domain_set: set[str] | None,
     gw_tokens: set[str],
     include_global: bool,
@@ -462,14 +463,35 @@ async def _collect_gateway_routes_impl(
     eff_cli = gateway_cli if gateway_cli is not None else default_gateway_cli
     max_routes = int(settings.max_routes_per_gateway)
 
-    # Load all assets across the management server so VSX parents in other domains and cluster members are visible
+    # Load all assets across the management server so VSX parents in other domains and cluster members are visible.
+    # Hydrate any uncached requested domains (or uncached servers) before filtering gateways.
     all_mgmt_assets = await cache.get_assets(mgmt_name=mgmt_name)
-    if not all_mgmt_assets:
-        all_mgmt_assets = await asset_service.get_assets(
-            mgmt_name=mgmt_name,
-            domain=domain,
-            cache_mode="smart",
+    if domain_set is not None:
+        cached_doms_by_mgmt: dict[str, set[str]] = defaultdict(set)
+        for asset in all_mgmt_assets:
+            cached_doms_by_mgmt[asset.mgmt_name].add(asset.domain_name)
+        target_mgmts = [mgmt_name] if mgmt_name is not None else list(settings.servers.keys())
+        missing_domains = sorted(
+            {d for m_name in target_mgmts for d in domain_set if d not in cached_doms_by_mgmt.get(m_name, set())}
         )
+        if missing_domains:
+            await asset_service.refresh_assets(
+                mgmt_name=mgmt_name,
+                domains=missing_domains,
+                include_global=include_global or ("Global" in missing_domains),
+                mode="smart",
+            )
+            all_mgmt_assets = await cache.get_assets(mgmt_name=mgmt_name)
+    elif not all_mgmt_assets or (
+        mgmt_name is None and set(settings.servers.keys()) - {a.mgmt_name for a in all_mgmt_assets}
+    ):
+        await asset_service.refresh_assets(
+            mgmt_name=mgmt_name,
+            domains=None,
+            include_global=include_global,
+            mode="smart",
+        )
+        all_mgmt_assets = await cache.get_assets(mgmt_name=mgmt_name)
 
     target_gateways = [
         a

@@ -36,6 +36,7 @@ from arodonata.core.services.topology.objects import (
     _expand_specific_reference,
     _index_objects,
     _load_domain_scoped_objects,
+    _lookup_indexed_object,
 )
 from arodonata.core.services.topology.policy_rules import (
     _load_domain_package_snapshot,
@@ -251,11 +252,7 @@ def _diagnose_gateway_interface(
     if "specific" in mode_lower:
         ref_uid = nif.specific_network_uid
         ref_name = nif.specific_network_ref
-        root_obj = (
-            (obj_by_uid.get(ref_uid) if ref_uid else None)
-            or (obj_by_name.get(ref_name) if ref_name else None)
-            or (obj_by_name.get(ref_uid) if ref_uid else None)
-        )
+        root_obj = _lookup_indexed_object(ref_uid, ref_name, obj_by_uid, obj_by_name)
         expanded = _expand_specific_reference(
             ref_uid=ref_uid,
             ref_name=ref_name,

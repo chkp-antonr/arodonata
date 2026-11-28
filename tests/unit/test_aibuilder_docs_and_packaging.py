@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
+import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -216,3 +219,313 @@ def test_sdk_quickref_valid_lambda_defaults_and_full_testing_methods() -> None:
         assert sig in quickref, f"Missing FileReplayApiMock method in quickref: {sig}"
     for sig in mock_http_sigs:
         assert sig in quickref, f"Missing CheckPointReplayHttpServer method in quickref: {sig}"
+
+
+def _collect_hatchling_build_paths(repo_root: Path) -> tuple[list[str], list[str]]:
+    """Collect wheel and sdist distribution paths via Hatchling (in-process or offline `uv` tool env)."""
+    try:
+        from hatchling.builders.sdist import SdistBuilder
+        from hatchling.builders.wheel import WheelBuilder
+    except ImportError:
+        script = (
+            "import json; "
+            "from hatchling.builders.wheel import WheelBuilder; "
+            "from hatchling.builders.sdist import SdistBuilder; "
+            "wb = WheelBuilder('.'); "
+            "sb = SdistBuilder('.'); "
+            "print(json.dumps({"
+            "'wheel': [f.distribution_path for f in wb.recurse_included_files()], "
+            "'sdist': [f.distribution_path for f in sb.recurse_included_files()]"
+            "}))"
+        )
+        proc = subprocess.run(
+            ["uv", "run", "--with", "hatchling", "--offline", "python", "-c", script],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        data = json.loads(proc.stdout)
+        return list(data["wheel"]), list(data["sdist"])
+
+    wb = WheelBuilder(str(repo_root))
+    sb = SdistBuilder(str(repo_root))
+    return (
+        [f.distribution_path for f in wb.recurse_included_files()],
+        [f.distribution_path for f in sb.recurse_included_files()],
+    )
+
+
+@pytest.mark.spec("SCN-AIBUILD-001-2")
+def test_built_wheel_and_sdist_exclude_populated_plugins_and_notebooklm() -> None:
+    """Verify real Hatchling wheel and sdist file sets exclude populated `plugins/` and `docs-notebooklm/`."""
+    plugin_root = REPO_ROOT / "plugins" / "arodonata-aibuilder"
+    assert (plugin_root / "plugin.json").is_file()
+    assert (plugin_root / "README.md").is_file()
+    assert (REPO_ROOT / "docs-notebooklm" / "05-sdk-quickref.md").is_file()
+
+    wheel_files, sdist_files = _collect_hatchling_build_paths(REPO_ROOT)
+
+    assert wheel_files
+    assert "arodonata/__init__.py" in wheel_files
+    assert all(path.startswith("arodonata/") or ".dist-info/" in path for path in wheel_files)
+    assert not any(path.startswith(("plugins/", "docs-notebooklm/")) for path in wheel_files)
+
+    assert sdist_files
+    assert "pyproject.toml" in sdist_files
+    assert "src/arodonata/__init__.py" in sdist_files
+    assert not any(Path(path).parts[0] in {"plugins", "docs-notebooklm"} for path in sdist_files if Path(path).parts)
+
+
+@pytest.mark.spec("SCN-AIBUILD-004-1")
+def test_plugin_manifests_match_schema_version_and_commitizen() -> None:
+    """Verify Antigravity and Claude Code manifests match schema, package version, and Commitizen config."""
+    plugin_root = REPO_ROOT / "plugins" / "arodonata-aibuilder"
+    ag_manifest_path = plugin_root / "plugin.json"
+    cc_manifest_path = plugin_root / ".claude-plugin" / "plugin.json"
+    readme_path = plugin_root / "README.md"
+
+    assert ag_manifest_path.is_file()
+    assert cc_manifest_path.is_file()
+    assert readme_path.is_file()
+    assert not list(plugin_root.rglob("mcp_config.json"))
+
+    ag_data = json.loads(ag_manifest_path.read_text(encoding="utf-8"))
+    cc_data = json.loads(cc_manifest_path.read_text(encoding="utf-8"))
+
+    allowed_ag_fields = {
+        "name",
+        "displayName",
+        "description",
+        "version",
+        "author",
+        "homepage",
+        "repository",
+        "suggestedPrompts",
+    }
+    assert set(ag_data.keys()).issubset(allowed_ag_fields)
+    assert ag_data["name"] == "arodonata-aibuilder"
+    assert cc_data["name"] == "arodonata-aibuilder"
+    assert ag_data["version"] == arodonata.__version__
+    assert cc_data["version"] == arodonata.__version__
+
+    prompts = ag_data["suggestedPrompts"]
+    assert isinstance(prompts, list) and 1 <= len(prompts) <= 3
+    assert all(isinstance(item, str) and item.strip() for item in prompts)
+
+    pyproject_data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    version_files = pyproject_data["tool"]["commitizen"]["version_files"]
+    for rel_manifest, manifest_path in (
+        ("plugins/arodonata-aibuilder/plugin.json", ag_manifest_path),
+        ("plugins/arodonata-aibuilder/.claude-plugin/plugin.json", cc_manifest_path),
+    ):
+        matches = [entry for entry in version_files if entry.startswith(f"{rel_manifest}:")]
+        assert len(matches) == 1, f"Expected Commitizen entry for {rel_manifest}"
+        pattern = matches[0].split(":", 1)[1]
+        text = manifest_path.read_text(encoding="utf-8")
+        assert re.search(pattern, text, re.MULTILINE), f"Commitizen pattern {pattern!r} did not match {rel_manifest}"
+
+
+@pytest.mark.spec("SCN-AIBUILD-005-1")
+def test_synced_plugin_references_match_canonical_sources_byte_for_byte(tmp_path: Path) -> None:
+    """Verify synced skill references match canonical quickref and quirk sources byte-for-byte."""
+    mod = _load_build_docs_module()
+    plugin_refs_dir = REPO_ROOT / "plugins" / "arodonata-aibuilder" / "skills" / "arodonata-aibuilder" / "references"
+
+    temp_refs_dir = tmp_path / "refs"
+    written = mod.sync_plugin_references(temp_refs_dir)
+    assert len(written) == 3
+
+    expected_bytes = {
+        "sdk-quickref.md": (REPO_ROOT / "docs-notebooklm" / "05-sdk-quickref.md").read_bytes(),
+        "checkpoint-api-quirks.md": mod._resolve_snippets(
+            (REPO_ROOT / "docs" / "troubleshooting" / "checkpoint-api-quirks.md").read_text(encoding="utf-8")
+        ).encode("utf-8"),
+        "checkpoint-ops-quirks.md": mod._resolve_snippets(
+            (REPO_ROOT / "docs" / "troubleshooting" / "checkpoint-ops-quirks.md").read_text(encoding="utf-8")
+        ).encode("utf-8"),
+    }
+    assert expected_bytes["sdk-quickref.md"] == mod.build_sdk_quickref().encode("utf-8")
+
+    for filename, expected in expected_bytes.items():
+        disk_path = plugin_refs_dir / filename
+        temp_path = temp_refs_dir / filename
+        assert disk_path.is_file(), f"Missing synced reference: {disk_path}"
+        assert disk_path.read_bytes() == expected
+        assert temp_path.read_bytes() == expected
+        assert "[MISSING SNIPPET:" not in disk_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.spec("SCN-AIBUILD-004-2")
+def test_skill_frontmatter_and_progressive_disclosure_links() -> None:
+    """Verify `SKILL.md` frontmatter and resolve every relative `references/` and `templates/` link."""
+    plugin_root = REPO_ROOT / "plugins" / "arodonata-aibuilder"
+    skill_dir = plugin_root / "skills" / "arodonata-aibuilder"
+    skill_path = skill_dir / "SKILL.md"
+    readme_path = plugin_root / "README.md"
+
+    assert readme_path.is_file()
+    assert skill_path.is_file()
+
+    raw_text = skill_path.read_text(encoding="utf-8")
+    fm_match = re.match(r"^---\n(.*?)\n---\n", raw_text, re.DOTALL)
+    assert fm_match is not None, "SKILL.md must begin with YAML frontmatter"
+    frontmatter = yaml.safe_load(fm_match.group(1))
+    assert isinstance(frontmatter, dict)
+    assert frontmatter.get("name") == "arodonata-aibuilder"
+    description = frontmatter.get("description")
+    assert isinstance(description, str) and description.strip()
+    assert "Check Point" in description
+    assert "Arodonata" in description
+
+    rel_links = re.findall(r"\[[^\]]+\]\(((?:references|templates)/[^)#\s]+)\)", raw_text)
+    assert rel_links, "SKILL.md must link to references/ and templates/"
+    assert any(link.startswith("references/") for link in rel_links)
+    assert any(link.startswith("templates/") for link in rel_links)
+    for rel_link in rel_links:
+        target = (skill_dir / rel_link).resolve()
+        assert target.is_file(), f"Broken relative link in SKILL.md: {rel_link}"
+        assert target.is_relative_to(skill_dir.resolve())
+
+
+@pytest.mark.spec("SCN-AIBUILD-005-2")
+def test_hand_authored_references_preserved_and_plugin_secret_hygiene(tmp_path: Path) -> None:
+    """Verify hand-authored references survive `sync_plugin_references()` and plugin contains no secrets/SIDs."""
+    mod = _load_build_docs_module()
+    plugin_root = REPO_ROOT / "plugins" / "arodonata-aibuilder"
+    refs_dir = plugin_root / "skills" / "arodonata-aibuilder" / "references"
+
+    hand_authored = ("cli-architecture-and-arlogi.md", "replay-testing-guide.md")
+    sandbox_refs = tmp_path / "refs"
+    sandbox_refs.mkdir()
+    before_bytes: dict[str, bytes] = {}
+    for name in hand_authored:
+        src_path = refs_dir / name
+        assert src_path.is_file(), f"Missing hand-authored reference: {src_path}"
+        content = src_path.read_bytes()
+        before_bytes[name] = content
+        (sandbox_refs / name).write_bytes(content)
+
+    mod.sync_plugin_references(sandbox_refs)
+    for name in hand_authored:
+        assert (sandbox_refs / name).read_bytes() == before_bytes[name]
+
+    forbidden_patterns = (
+        re.compile(r"X-chkp-sid\s*:", re.IGNORECASE),
+        re.compile(r"BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY"),
+        re.compile(
+            r"(?:api_key|password)\s*=\s*['\"](?!offline-replay-placeholder|dummy|mock-key)[A-Za-z0-9+/=_-]{16,}['\"]"
+        ),
+    )
+    for path in sorted(plugin_root.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        body = path.read_text(encoding="utf-8")
+        for pat in forbidden_patterns:
+            assert not pat.search(body), f"Secret/SID hygiene violation ({pat.pattern}) in {path}"
+
+
+@pytest.mark.spec("SCN-AIBUILD-006-1")
+def test_starter_templates_parse_cleanly_and_follow_sdk_conventions() -> None:
+    """Verify starter Python and TOML templates parse cleanly and encode PEP 723, arlogi, dry-run, and Asset rules."""
+    templates_dir = REPO_ROOT / "plugins" / "arodonata-aibuilder" / "skills" / "arodonata-aibuilder" / "templates"
+    cli_script_path = templates_dir / "cli_script_pep723.py"
+    pyproject_tmpl_path = templates_dir / "cli_project_pyproject.toml"
+    replay_test_path = templates_dir / "test_script_replay.py"
+
+    for path in (cli_script_path, pyproject_tmpl_path, replay_test_path):
+        assert path.is_file(), f"Missing template: {path}"
+
+    cli_source = cli_script_path.read_text(encoding="utf-8")
+    replay_source = replay_test_path.read_text(encoding="utf-8")
+    pyproject_text = pyproject_tmpl_path.read_text(encoding="utf-8")
+
+    ast.parse(cli_source, filename=str(cli_script_path))
+    ast.parse(replay_source, filename=str(replay_test_path))
+    parsed_toml = tomllib.loads(pyproject_text)
+
+    deps = parsed_toml["project"]["dependencies"]
+    assert any(dep.startswith("arodonata") for dep in deps)
+    assert any(dep.startswith("arlogi") for dep in deps)
+
+    for text in (cli_source, replay_source):
+        assert "arodonata" in text
+        assert "arlogi" in text
+
+    assert "# /// script" in cli_source
+    assert "# ///" in cli_source
+    assert "arlogi.setup_logging(" in cli_source
+    assert "json_file_only=False" in cli_source
+    assert "--dry-run" in cli_source
+    assert "roles=" in cli_source
+    assert "platforms=" in cli_source
+    assert "is_policy_target" in cli_source
+    assert "is_execution_target" in cli_source
+
+
+@pytest.mark.spec("SCN-AIBUILD-006-2")
+@pytest.mark.asyncio
+async def test_starter_replay_template_executes_offline_against_file_replay_mock() -> None:
+    """Verify `templates/test_script_replay.py` executes cleanly offline against `FileReplayApiMock`."""
+    replay_test_path = (
+        REPO_ROOT
+        / "plugins"
+        / "arodonata-aibuilder"
+        / "skills"
+        / "arodonata-aibuilder"
+        / "templates"
+        / "test_script_replay.py"
+    )
+    spec = importlib.util.spec_from_file_location("arodonata_plugin_template_replay", replay_test_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    await module.test_offline_replay_inventory_and_classification()
+
+
+@pytest.mark.spec("SCN-AIBUILD-007-1")
+def test_scn_aibuild_007_1_replay_docs_and_governance_ports_match_sdk() -> None:
+    """SCN-AIBUILD-007-1: replay-testing-guide.md, AGENTS.md, and openspec/config.yaml match live SDK and testing contracts."""
+    guide_text = (
+        REPO_ROOT
+        / "plugins"
+        / "arodonata-aibuilder"
+        / "skills"
+        / "arodonata-aibuilder"
+        / "references"
+        / "replay-testing-guide.md"
+    ).read_text(encoding="utf-8")
+    assert '"read_only"' not in guide_text
+    assert '"deny"' not in guide_text
+    assert "server.base_url" not in guide_text
+    for token in (
+        '"write"',
+        '"read"',
+        '"none"',
+        "mgmt_ip",
+        "mgmt_port",
+        "tls_trust",
+        "tls_fingerprints",
+        "server.snapshot_state()",
+    ):
+        assert token in guide_text, f"replay-testing-guide.md missing {token!r}"
+
+    agents_text = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    config_text = (REPO_ROOT / "openspec" / "config.yaml").read_text(encoding="utf-8")
+    for doc_name, text in (("AGENTS.md", agents_text), ("openspec/config.yaml", config_text)):
+        for port_name in (
+            "ApiPort",
+            "LockPort",
+            "CachePort",
+            "DomainCachePort",
+            "SidCachePort",
+            "SyncStatePort",
+            "ObjectCachePort",
+            "ServiceCachePort",
+            "AssetCachePort",
+            "TopologyCachePort",
+            "RulebaseCachePort",
+        ):
+            assert port_name in text, f"{doc_name} missing port reference {port_name!r}"

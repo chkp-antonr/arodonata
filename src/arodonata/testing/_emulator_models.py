@@ -40,6 +40,7 @@ _MUTATING_NON_PREFIX_COMMANDS: frozenset[str] = frozenset(
     {
         "publish",
         "discard",
+        "install-policy",
         "assign-global-assignment",
         "assign-global-policy",
     }

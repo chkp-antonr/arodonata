@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from arodonata.core.models.common import SyncStatus
 from arodonata.core.models.rulebase import (
@@ -38,53 +39,62 @@ def _find_layer_entry(
     rulebase_type: RulebaseType | None = None,
 ) -> RulebaseLayerEntry | None:
     target = layer_name_or_uid.strip()
-    for layer in snapshot.layers:
-        if rulebase_type is not None and layer.rulebase_type != rulebase_type:
-            continue
-        if layer.uid == target or layer.name == target:
-            return layer
-    # Fallback: check package_layers or rule entries if layer table entry was omitted in synthetic tests
-    for pl in snapshot.package_layers:
-        if rulebase_type is not None and pl.rulebase_type != rulebase_type:
-            continue
-        if pl.layer_uid == target or pl.layer_name == target:
-            return RulebaseLayerEntry(
-                mgmt_name=snapshot.mgmt_name,
-                domain_name=snapshot.domain_name,
-                uid=pl.layer_uid,
-                name=pl.layer_name,
-                rulebase_type=pl.rulebase_type,
-            )
-    if rulebase_type in (None, "access"):
-        for ar in snapshot.access_rules:
-            if ar.layer_uid == target or ar.layer_name == target:
+    target_low = target.lower()
+
+    for case_insensitive in (False, True):
+
+        def _matches(uid_val: str, name_val: str, *, ci: bool = case_insensitive) -> bool:
+            if not ci:
+                return uid_val == target or name_val == target
+            return uid_val.lower() == target_low or name_val.lower() == target_low
+
+        for layer in snapshot.layers:
+            if rulebase_type is not None and layer.rulebase_type != rulebase_type:
+                continue
+            if _matches(layer.uid, layer.name):
+                return layer
+        # Fallback: check package_layers or rule entries if layer table entry was omitted in synthetic tests
+        for pl in snapshot.package_layers:
+            if rulebase_type is not None and pl.rulebase_type != rulebase_type:
+                continue
+            if _matches(pl.layer_uid, pl.layer_name):
                 return RulebaseLayerEntry(
                     mgmt_name=snapshot.mgmt_name,
                     domain_name=snapshot.domain_name,
-                    uid=ar.layer_uid,
-                    name=ar.layer_name,
-                    rulebase_type="access",
+                    uid=pl.layer_uid,
+                    name=pl.layer_name,
+                    rulebase_type=pl.rulebase_type,
                 )
-    if rulebase_type in (None, "https"):
-        for hr in snapshot.https_rules:
-            if hr.layer_uid == target or hr.layer_name == target:
-                return RulebaseLayerEntry(
-                    mgmt_name=snapshot.mgmt_name,
-                    domain_name=snapshot.domain_name,
-                    uid=hr.layer_uid,
-                    name=hr.layer_name,
-                    rulebase_type="https",
-                )
-    if rulebase_type in (None, "threat"):
-        for tr in snapshot.threat_rules:
-            if tr.layer_uid == target or tr.layer_name == target:
-                return RulebaseLayerEntry(
-                    mgmt_name=snapshot.mgmt_name,
-                    domain_name=snapshot.domain_name,
-                    uid=tr.layer_uid,
-                    name=tr.layer_name,
-                    rulebase_type="threat",
-                )
+        if rulebase_type in (None, "access"):
+            for ar in snapshot.access_rules:
+                if _matches(ar.layer_uid, ar.layer_name):
+                    return RulebaseLayerEntry(
+                        mgmt_name=snapshot.mgmt_name,
+                        domain_name=snapshot.domain_name,
+                        uid=ar.layer_uid,
+                        name=ar.layer_name,
+                        rulebase_type="access",
+                    )
+        if rulebase_type in (None, "https"):
+            for hr in snapshot.https_rules:
+                if _matches(hr.layer_uid, hr.layer_name):
+                    return RulebaseLayerEntry(
+                        mgmt_name=snapshot.mgmt_name,
+                        domain_name=snapshot.domain_name,
+                        uid=hr.layer_uid,
+                        name=hr.layer_name,
+                        rulebase_type="https",
+                    )
+        if rulebase_type in (None, "threat"):
+            for tr in snapshot.threat_rules:
+                if _matches(tr.layer_uid, tr.layer_name):
+                    return RulebaseLayerEntry(
+                        mgmt_name=snapshot.mgmt_name,
+                        domain_name=snapshot.domain_name,
+                        uid=tr.layer_uid,
+                        name=tr.layer_name,
+                        rulebase_type="threat",
+                    )
     return None
 
 
@@ -247,7 +257,11 @@ def number_layer_rulebase(
                 and target_dom_layer_uid
                 and numbered.placeholder_domain_layer_uid != target_dom_layer_uid
             ):
-                numbered = numbered.model_copy(update={"placeholder_domain_layer_uid": target_dom_layer_uid})
+                upd: dict[str, Any] = {"placeholder_domain_layer_uid": target_dom_layer_uid}
+                if numbered.inline_layer_uid:
+                    upd["inline_layer_uid"] = None
+                    upd["inline_layer_name"] = None
+                numbered = numbered.model_copy(update=upd)
             top_rules.append(numbered)
             flat_rules.append(numbered)
             _collect_flat_children(children, flat_rules)
@@ -351,6 +365,7 @@ def number_package_rulebase(
 ) -> PackageRulebase:
     """Compute SmartConsole-accurate hierarchical numbering for a policy package."""
     target = package_name_or_uid.strip()
+    target_low = target.lower()
     pkg_layers = sorted(
         [
             pl
@@ -359,21 +374,47 @@ def number_package_rulebase(
         ],
         key=lambda pl: pl.position,
     )
+    if not pkg_layers:
+        pkg_layers = sorted(
+            [
+                pl
+                for pl in snapshot.package_layers
+                if (pl.package_uid.lower() == target_low or pl.package_name.lower() == target_low)
+                and pl.rulebase_type == rulebase_type
+            ],
+            key=lambda pl: pl.position,
+        )
 
     pkg_uid = pkg_layers[0].package_uid if pkg_layers else target
     pkg_name = pkg_layers[0].package_name if pkg_layers else target
 
-    # Also check if package name/uid is known from another rulebase_type or nat_rules
+    # Also check if package name/uid is known from another rulebase_type or nat_rules (exact first, then .lower())
     if not pkg_layers:
-        for pl in snapshot.package_layers:
-            if pl.package_uid == target or pl.package_name == target:
-                pkg_uid = pl.package_uid
-                pkg_name = pl.package_name
+        resolved_pkg = False
+        for case_insensitive in (False, True):
+            for pl in snapshot.package_layers:
+                if (
+                    (pl.package_uid.lower() == target_low or pl.package_name.lower() == target_low)
+                    if case_insensitive
+                    else (pl.package_uid == target or pl.package_name == target)
+                ):
+                    pkg_uid = pl.package_uid
+                    pkg_name = pl.package_name
+                    resolved_pkg = True
+                    break
+            if resolved_pkg:
                 break
-        for nr in snapshot.nat_rules:
-            if nr.package_uid == target or nr.package_name == target:
-                pkg_uid = nr.package_uid
-                pkg_name = nr.package_name
+            for nr in snapshot.nat_rules:
+                if (
+                    (nr.package_uid.lower() == target_low or nr.package_name.lower() == target_low)
+                    if case_insensitive
+                    else (nr.package_uid == target or nr.package_name == target)
+                ):
+                    pkg_uid = nr.package_uid
+                    pkg_name = nr.package_name
+                    resolved_pkg = True
+                    break
+            if resolved_pkg:
                 break
 
     if rulebase_type == "nat":
@@ -522,12 +563,12 @@ def _record_layer_prefixes_from_rules(
         if r.children:
             child_layer_uid = r.children[0].layer_uid
             child_layer_name = r.children[0].layer_name
-        elif r.inline_layer_uid:
-            child_layer_uid = r.inline_layer_uid
-            child_layer_name = r.inline_layer_name or ""
         elif r.placeholder_domain_layer_uid:
             child_layer_uid = r.placeholder_domain_layer_uid
             child_layer_name = (layer_name_by_uid or {}).get(child_layer_uid, "")
+        elif r.inline_layer_uid:
+            child_layer_uid = r.inline_layer_uid
+            child_layer_name = r.inline_layer_name or ""
         if child_layer_uid and not child_layer_name and layer_name_by_uid:
             child_layer_name = layer_name_by_uid.get(child_layer_uid, "")
         if child_layer_uid:

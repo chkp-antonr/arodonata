@@ -287,16 +287,18 @@ class LoginGate:
             ) from exc
 
         try:
+            cooldown_wait = self._next_allowed_at[target_ip] - self._monotonic()
+            if cooldown_wait > 0:
+                remaining_pre = max(0.01, deadline - self._monotonic())
+                if self._monotonic() + cooldown_wait > deadline:
+                    raise AuthenticationError(
+                        f"LoginGate cooldown ({cooldown_wait:.1f}s) on MDS member {target_ip!r} "
+                        f"exceeds remaining wait_timeout ({remaining_pre:.1f}s)."
+                    )
+                await self._sleep(cooldown_wait)
+
             remaining = max(0.01, deadline - self._monotonic())
             if self._lock_port is None:
-                cooldown_wait = self._next_allowed_at[target_ip] - self._monotonic()
-                if cooldown_wait > 0:
-                    if self._monotonic() + cooldown_wait > deadline:
-                        raise AuthenticationError(
-                            f"LoginGate cooldown ({cooldown_wait:.1f}s) on MDS member {target_ip!r} "
-                            f"exceeds remaining wait_timeout ({remaining:.1f}s)."
-                        )
-                    await self._sleep(cooldown_wait)
                 if self._min_login_interval > 0:
                     self._next_allowed_at[target_ip] = max(
                         self._next_allowed_at[target_ip],

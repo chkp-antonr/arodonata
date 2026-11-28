@@ -23,10 +23,12 @@ arodonata-v2/
 ├── docs/
 │   ├── architecture/         # [TRACKED] Architecture, database schema, caching, sessions, CPCRUD
 │   ├── guides/               # [TRACKED] Usage, mock/replay, and integration guides
-│   ├── scripts/              # [TRACKED] Documentation bundle build scripts (`build_notebooklm_docs.py`)
+│   ├── scripts/              # [TRACKED] Documentation bundle build scripts (`build_notebooklm_docs.py` — also syncs `plugins/arodonata-aibuilder/skills/arodonata-aibuilder/references/`)
 │   ├── troubleshooting/      # [TRACKED] Post-mortems, Check Point API & ops quirks, knowledge base
 │   └── _notes/               # [IGNORED] Scratchpads, raw LLM transcripts, and temporary notes
 ├── docs-notebooklm/          # [TRACKED] Consolidated LLM/NotebookLM knowledge bundles (`01..05.md`)
+├── plugins/
+│   └── arodonata-aibuilder/  # [TRACKED] Multi-agent plugin bundle (manifests, skill, synced references, templates)
 └── README.md                 # [TRACKED] Project entry point
 ```
 
@@ -47,7 +49,7 @@ arodonata-v2/
 - **Python Runtime**: Python 3.13 (`.python-version` specifies `3.13.5`).
 - **Package Management**: `uv`. Run `uv sync` to install dependencies.
 - **Hexagonal Architecture (Ports & Adapters)**:
-  - Business logic in `core` depends strictly on `ApiPort` and `CachePort` protocols, never directly on HTTP transport (`aiohttp`/`cpapi`) or database drivers (`asyncpg`/`aiosqlite`).
+  - Business logic in `core` depends strictly on pure port protocols (`ApiPort`, `LockPort`, `AuthProvider`, `GatewayCliPort`, `RulebaseRefreshPort`, and `CachePort` / its eight ISP sub-protocols: `DomainCachePort`, `SidCachePort`, `SyncStatePort`, `ObjectCachePort`, `ServiceCachePort`, `AssetCachePort`, `TopologyCachePort`, `RulebaseCachePort`), never directly on HTTP transport (`aiohttp`/`cpapi`) or database drivers (`asyncpg`/`aiosqlite`).
 - **Database-Backed Cache**:
   - SQLAlchemy 2.0+ async + SQLModel on PostgreSQL or SQLite with schema hash auto-migration (`arodonata_schema_version`) and distributed locks (`arodonata_distributed_locks`).
 - **Security Hygiene**:

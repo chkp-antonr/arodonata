@@ -1,4 +1,4 @@
-"""Regenerate docs-notebooklm/*.md and prepare docs/_build_bundle/arodonata-v2-docs for build-docs.
+"""Regenerate docs-notebooklm/*.md, sync plugin skill references, and prepare docs/_build_bundle/arodonata-v2-docs for build-docs.
 
 Run after documentation or API changes:
 
@@ -48,6 +48,7 @@ EXAMPLES = REPO / "examples"
 OPENSPEC_SPECS = REPO / "openspec" / "specs"
 OUT = REPO / "docs-notebooklm"
 BUNDLE_DIR = DOCS / "_build_bundle" / "arodonata-v2-docs"
+PLUGIN_REFS_DIR = REPO / "plugins" / "arodonata-aibuilder" / "skills" / "arodonata-aibuilder" / "references"
 
 SNIPPET_RE = re.compile(r'^--8<-- "(.+?)"\s*$', re.MULTILINE)
 
@@ -854,6 +855,29 @@ def prepare_build_docs_bundle() -> None:
         (BUNDLE_DIR / bundle_name).write_text(content, encoding="utf-8")
 
 
+def sync_plugin_references(target_dir: Path | None = None, *, sdk_quickref_content: str | None = None) -> list[Path]:
+    """Deterministically sync SDK quick-reference and Check Point quirk docs into the plugin skill references."""
+    dest = target_dir or PLUGIN_REFS_DIR
+    dest.mkdir(parents=True, exist_ok=True)
+
+    synced_payloads: dict[str, str] = {
+        "sdk-quickref.md": sdk_quickref_content if sdk_quickref_content is not None else build_sdk_quickref(),
+        "checkpoint-api-quirks.md": _resolve_snippets(
+            (DOCS / "troubleshooting" / "checkpoint-api-quirks.md").read_text(encoding="utf-8")
+        ),
+        "checkpoint-ops-quirks.md": _resolve_snippets(
+            (DOCS / "troubleshooting" / "checkpoint-ops-quirks.md").read_text(encoding="utf-8")
+        ),
+    }
+
+    written: list[Path] = []
+    for filename, content in synced_payloads.items():
+        path = dest / filename
+        path.write_text(content, encoding="utf-8")
+        written.append(path)
+    return written
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -874,6 +898,9 @@ def main() -> None:
         p = OUT / name
         p.write_text(content, encoding="utf-8")
         print(f"Wrote {p.relative_to(REPO)}: {p.stat().st_size:,} bytes")
+
+    synced_paths = sync_plugin_references(sdk_quickref_content=files["05-sdk-quickref.md"])
+    print(f"Synced {len(synced_paths)} plugin reference(s) into {PLUGIN_REFS_DIR.relative_to(REPO)}")
 
     prepare_build_docs_bundle()
     print(f"Prepared build-docs bundle in {BUNDLE_DIR.relative_to(REPO)}")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from arodonata.core.errors import redact_sid
@@ -24,7 +24,7 @@ from arodonata.cpcrud._planner_helpers import (
 from arodonata.cpcrud.differ import DiffSafetyError, compute_rule_diff
 from arodonata.cpcrud.models import ConflictPolicy, Outcome, PlannedAction
 from arodonata.cpcrud.position_helper import resolve_rule_position
-from arodonata.cpcrud.rule_identity import RuleEntryUnion, match_rule, rule_spec_has_delta_mapping
+from arodonata.cpcrud.rule_identity import RuleEntryUnion, deref_rule_list, match_rule, rule_spec_has_delta_mapping
 from arodonata.cpcrud.state_reader import HybridStateReader, StateLookupError
 
 
@@ -104,23 +104,101 @@ def _build_virtual_rule_from_payload(
     )
 
 
-def _apply_update_to_virtual_rule(existing: RuleEntryUnion, update_payload: Mapping[str, Any]) -> RuleEntryUnion:
-    """Apply `set-*-rule` payload fields onto a rule entry copy for intra-plan virtual state."""
+def _apply_list_cell_patch(
+    exist_val: Sequence[str],
+    raw_exist_cell: Any,
+    patch_val: Any,
+    *,
+    is_traffic_field: bool,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None,
+) -> list[str]:
+    if isinstance(patch_val, list):
+        return list(patch_val)
+    if isinstance(patch_val, Mapping):
+        base_items = deref_rule_list(
+            exist_val,
+            raw_exist_cell,
+            obj_dict or {},
+            default_any=is_traffic_field,
+        )
+        rem_items = {str(x) for x in (patch_val.get("remove") or [])}
+        add_items = [str(x) for x in (patch_val.get("add") or [])]
+        surviving = [x for x in base_items if x not in rem_items]
+        if is_traffic_field and add_items:
+            surviving = [x for x in surviving if x.lower() != "any"]
+        combined = list(dict.fromkeys([*surviving, *add_items]))
+        if not combined and is_traffic_field:
+            return ["Any"]
+        return combined
+    return list(exist_val)
+
+
+def _apply_update_to_virtual_rule(
+    existing: RuleEntryUnion,
+    update_payload: Mapping[str, Any],
+    *,
+    obj_dict: Mapping[str, Mapping[str, Any]] | None = None,
+) -> RuleEntryUnion:
+    """Apply `set-*-rule` payload fields (including incremental cell deltas and NAT/track fields) for intra-plan reads."""
+    raw_exist = dict(existing.raw_data) if isinstance(existing.raw_data, Mapping) else {}
     upd: dict[str, Any] = {}
     if "new-name" in update_payload:
         upd["name"] = str(update_payload["new-name"])
+        raw_exist["name"] = upd["name"]
     if "comments" in update_payload:
         upd["comments"] = str(update_payload["comments"])
+        raw_exist["comments"] = upd["comments"]
     if "enabled" in update_payload:
         upd["enabled"] = bool(update_payload["enabled"])
+        raw_exist["enabled"] = upd["enabled"]
     if "action" in update_payload:
         upd["action"] = str(update_payload["action"])
-    for cell in ("source", "destination", "service"):
-        val = update_payload.get(cell)
-        if isinstance(val, list):
-            upd[cell] = list(val)
-    if "install-on" in update_payload and isinstance(update_payload["install-on"], list):
-        upd["install_on"] = list(update_payload["install-on"])
+        raw_exist["action"] = upd["action"]
+    if "track" in update_payload:
+        raw_t = update_payload["track"]
+        raw_exist["track"] = raw_t
+        if not isinstance(existing, NatRuleEntry):
+            upd["track"] = raw_t.get("type") if isinstance(raw_t, Mapping) else str(raw_t)
+
+    if isinstance(existing, NatRuleEntry):
+        for kebab_k, attr_k in (
+            ("method", "method"),
+            ("original-source", "original_source"),
+            ("original-destination", "original_destination"),
+            ("original-service", "original_service"),
+            ("translated-source", "translated_source"),
+            ("translated-destination", "translated_destination"),
+            ("translated-service", "translated_service"),
+        ):
+            if kebab_k in update_payload:
+                val = update_payload[kebab_k]
+                str_val = str(val) if val is not None else None
+                upd[attr_k] = str_val
+                raw_exist[kebab_k] = val
+    else:
+        for cell in ("source", "destination", "service"):
+            if cell in update_payload:
+                post_list = _apply_list_cell_patch(
+                    getattr(existing, cell),
+                    raw_exist.get(cell),
+                    update_payload[cell],
+                    is_traffic_field=True,
+                    obj_dict=obj_dict,
+                )
+                upd[cell] = post_list
+                raw_exist[cell] = list(post_list)
+
+    if "install-on" in update_payload:
+        post_install = _apply_list_cell_patch(
+            existing.install_on,
+            raw_exist.get("install-on"),
+            update_payload["install-on"],
+            is_traffic_field=False,
+            obj_dict=obj_dict,
+        )
+        upd["install_on"] = post_install
+        raw_exist["install-on"] = list(post_install)
+
     if isinstance(existing, AccessRuleEntry):
         for sk, kk in (
             ("source_negate", "source-negate"),
@@ -129,10 +207,37 @@ def _apply_update_to_virtual_rule(existing: RuleEntryUnion, update_payload: Mapp
         ):
             if kk in update_payload:
                 upd[sk] = bool(update_payload[kk])
+                raw_exist[kk] = bool(update_payload[kk])
         if "inline-layer" in update_payload:
             upd["inline_layer_name"] = str(update_payload["inline-layer"]) or None
-    elif isinstance(existing, HttpsRuleEntry) and "certificate" in update_payload:
-        upd["certificate"] = str(update_payload["certificate"]) or None
+            raw_exist["inline-layer"] = update_payload["inline-layer"]
+    elif isinstance(existing, HttpsRuleEntry):
+        if "site-category" in update_payload:
+            post_sc = _apply_list_cell_patch(
+                existing.site_category,
+                raw_exist.get("site-category"),
+                update_payload["site-category"],
+                is_traffic_field=False,
+                obj_dict=obj_dict,
+            )
+            upd["site_category"] = post_sc
+            raw_exist["site-category"] = list(post_sc)
+        if "certificate" in update_payload:
+            upd["certificate"] = str(update_payload["certificate"]) or None
+            raw_exist["certificate"] = upd["certificate"]
+    elif isinstance(existing, ThreatRuleEntry):
+        if "protected-scope" in update_payload:
+            post_ps = _apply_list_cell_patch(
+                existing.protected_scope,
+                raw_exist.get("protected-scope"),
+                update_payload["protected-scope"],
+                is_traffic_field=False,
+                obj_dict=obj_dict,
+            )
+            upd["protected_scope"] = post_ps
+            raw_exist["protected-scope"] = list(post_ps)
+
+    upd["raw_data"] = raw_exist
     return existing.model_copy(update=upd)
 
 
@@ -201,6 +306,23 @@ async def plan_rule_step(
                     message=f"{rule_type} {display_name!r} is already absent.",
                 )
             is_planned_rule = str(existing.uid).startswith("planned:")
+            if is_planned_rule and not existing.name:
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation="delete",
+                    object_type=rule_type,
+                    name=display_name,
+                    requested_name=display_name,
+                    layer=layer,
+                    package=package,
+                    desired_spec=spec,
+                    error=(
+                        f"Cannot delete unnamed virtual {rule_type} {existing.uid!r} created earlier in the same plan; "
+                        "assign an explicit 'name' to created rules that will be referenced later."
+                    ),
+                )
             del_payload: dict[str, Any] = (
                 {"name": existing.name} if (is_planned_rule and existing.name) else {"uid": existing.uid}
             )
@@ -248,6 +370,8 @@ async def plan_rule_step(
                 package=package,
                 obj_dict=paged.objects_dictionary,
             )
+            is_planned_rule = str(existing.uid).startswith("planned:")
+            eff_target_uid = None if is_planned_rule else existing.uid
             try:
                 diffs, update_payload = compute_rule_diff(
                     spec,
@@ -266,7 +390,7 @@ async def plan_rule_step(
                     name=existing.name or display_name,
                     requested_name=display_name,
                     resolved_name=existing.name or display_name,
-                    target_uid=existing.uid,
+                    target_uid=eff_target_uid,
                     layer=layer,
                     package=package,
                     prior_state=prior_state,
@@ -281,7 +405,7 @@ async def plan_rule_step(
                     operation=verb,
                     object_type=rule_type,
                     name=existing.name or display_name,
-                    target_uid=existing.uid,
+                    target_uid=eff_target_uid,
                     layer=layer,
                     package=package,
                     outcome=Outcome.UNCHANGED,
@@ -301,7 +425,7 @@ async def plan_rule_step(
                     operation=verb,
                     object_type=rule_type,
                     name=existing.name or display_name,
-                    target_uid=existing.uid,
+                    target_uid=eff_target_uid,
                     layer=layer,
                     package=package,
                     outcome=Outcome.ERROR,
@@ -312,7 +436,24 @@ async def plan_rule_step(
                     error=err_msg,
                 )
 
-            is_planned_rule = str(existing.uid).startswith("planned:")
+            if is_planned_rule and not existing.name:
+                return _make_error_action(
+                    action_id=action_id,
+                    mgmt_name=mgmt_name,
+                    domain_name=domain_name,
+                    operation=verb,
+                    object_type=rule_type,
+                    name=display_name,
+                    requested_name=display_name,
+                    layer=layer,
+                    package=package,
+                    prior_state=prior_state,
+                    desired_spec=spec,
+                    error=(
+                        f"Cannot update unnamed virtual {rule_type} {existing.uid!r} created earlier in the same plan; "
+                        "assign an explicit 'name' to created rules that will be referenced later."
+                    ),
+                )
             if is_planned_rule and existing.name:
                 update_payload["name"] = existing.name
             else:
@@ -322,7 +463,11 @@ async def plan_rule_step(
             else:
                 update_payload["layer"] = layer or paged.layer_name
 
-            updated_virtual = _apply_update_to_virtual_rule(existing, update_payload)
+            updated_virtual = _apply_update_to_virtual_rule(
+                existing,
+                update_payload,
+                obj_dict=paged.objects_dictionary,
+            )
             reader.record_virtual_rule(
                 mgmt_name,
                 domain_name,
@@ -421,7 +566,14 @@ async def plan_rule_step(
             payload=add_payload,
             position=len(rules_list) + 1,
         )
-        reader.record_virtual_rule(mgmt_name, domain_name, rb_type, target_key, virtual_rule)
+        reader.record_virtual_rule(
+            mgmt_name,
+            domain_name,
+            rb_type,
+            target_key,
+            virtual_rule,
+            placement_position=resolved_pos,
+        )
         return PlannedAction(
             action_id=action_id,
             mgmt_name=mgmt_name,

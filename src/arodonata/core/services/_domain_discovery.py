@@ -9,7 +9,7 @@ from typing import Any
 
 import arlogi
 
-from arodonata.core.errors import ServerIdentityError
+from arodonata.core.errors import ServerIdentityError, redact_sid
 from arodonata.core.models.common import ApiCallResult, utc_now
 from arodonata.core.models.domains import (
     DomainInfo,
@@ -167,7 +167,7 @@ async def discover_mds_domains(
             success=False,
             status_code=0,
             error_code=type(exc).__name__,
-            error_message=str(exc),
+            error_message=redact_sid(str(exc)),
         )
 
     details_level = "full"
@@ -177,12 +177,13 @@ async def discover_mds_domains(
     if not res.success:
         is_single_domain = is_single_domain_unsupported(res)
         if not is_single_domain and not transport_or_auth_failed and is_rbac_or_details_level_rejected(res):
+            safe_err = redact_sid(res.error_message or "")
             log.warning(
                 f"show-domains (details-level=full) on '{mgmt_name}' rejected "
-                f"({res.error_code or res.status_code}: {res.error_message}); retrying with details-level=standard.",
+                f"({res.error_code or res.status_code}: {safe_err}); retrying with details-level=standard.",
                 mgmt_name=mgmt_name,
                 error_code=res.error_code or str(res.status_code),
-                error_message=res.error_message,
+                error_message=safe_err,
             )
             try:
                 fb_res = await execute_cmd("show-domains", {"details-level": "standard", "limit": 500, "offset": 0})
@@ -193,7 +194,7 @@ async def discover_mds_domains(
                     success=False,
                     status_code=0,
                     error_code=type(exc).__name__,
-                    error_message=str(exc),
+                    error_message=redact_sid(str(exc)),
                 )
             if fb_res.success:
                 res = fb_res
@@ -238,11 +239,12 @@ async def discover_mds_domains(
             except ServerIdentityError:
                 raise
             except Exception as exc:
+                safe_exc = redact_sid(str(exc))
                 log.warning(
-                    f"Pagination of show-domains on '{mgmt_name}' interrupted at offset {page_offset}: {exc}",
+                    f"Pagination of show-domains on '{mgmt_name}' interrupted at offset {page_offset}: {safe_exc}",
                     mgmt_name=mgmt_name,
                     offset=page_offset,
-                    error=str(exc),
+                    error=safe_exc,
                 )
                 break
             if not page_res.success:

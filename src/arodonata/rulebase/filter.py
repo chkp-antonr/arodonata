@@ -8,7 +8,6 @@ Check Point Management API round-trips, formatting output as `"markdown"`,
 
 from __future__ import annotations
 
-import html
 import ipaddress
 import json
 import shlex
@@ -28,6 +27,7 @@ from arodonata.core.models.sentinels import (
     normalize_nat_original_sentinel,
 )
 from arodonata.core.models.services import CPService
+from arodonata.core.primitives import escape_markdown_cell, escape_markdown_code
 from arodonata.rulebase.models import (
     FilteredRulebaseResult,
     NumberedLayerRulebase,
@@ -456,26 +456,13 @@ def rule_matches_filter(
 
 
 def _esc_rule_md(val: Any) -> str:
-    """Escape HTML tags, newlines, pipes, and Markdown link/code delimiters in rulebase table cells."""
-    if val is None:
-        return ""
-    escaped = html.escape(str(val), quote=False)
-    return (
-        escaped.replace("\r\n", " ")
-        .replace("\r", " ")
-        .replace("\n", " ")
-        .replace("|", "\\|")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("`", "\\`")
-    )
+    """Escape HTML tags, newlines, backslashes, pipes, and Markdown link/code delimiters in rulebase table cells."""
+    return escape_markdown_cell(val)
 
 
 def _esc_rule_code(val: Any) -> str:
     """Neutralize newlines, pipes, and backticks inside inline Markdown code spans."""
-    if val is None:
-        return ""
-    return str(val).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("|", "\\|").replace("`", "'")
+    return escape_markdown_code(val)
 
 
 def format_rules_markdown(

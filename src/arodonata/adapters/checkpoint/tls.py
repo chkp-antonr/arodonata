@@ -15,6 +15,7 @@ import stat
 import sys
 import tempfile
 import weakref
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 if sys.platform == "win32":  # pragma: no cover
@@ -383,27 +384,66 @@ class TrustStore:
         persist: bool = True,
     ) -> KnownHostEntry:
         """Record a trusted fingerprint for `(host, port)` and atomically persist with mode `0600`."""
-        self.load()
         key = format_host_port(host, port)
+        return self.record_many([(host, port)], fingerprint, source=source, persist=persist)[key]
+
+    def record_many(
+        self,
+        targets: Sequence[tuple[str, int]],
+        fingerprint: str,
+        *,
+        source: str = "tofu",
+        persist: bool = True,
+    ) -> dict[str, KnownHostEntry]:
+        """Record a trusted fingerprint for multiple `(host, port)` targets atomically.
+
+        Checks all target keys against on-disk entries inside a single `flock` critical section
+        before writing or replacing `tls_known_hosts.json` so a conflict on any target never
+        persists a partial write for sibling targets.
+        """
+        self.load()
         normalized = normalize_fingerprint(fingerprint)
         now_iso = utc_now().isoformat()
-        existing = self._entries.get(key)
-        entry = KnownHostEntry(
-            fingerprint=normalized,
-            source=source,
-            first_seen_at=existing.first_seen_at if existing else now_iso,
-            last_seen_at=now_iso,
-        )
+        updates: dict[str, KnownHostEntry] = {}
+        for host, port in targets:
+            key = format_host_port(host, port)
+            if key in updates:
+                continue
+            existing = self._entries.get(key)
+            updates[key] = KnownHostEntry(
+                fingerprint=normalized,
+                source=source,
+                first_seen_at=existing.first_seen_at if existing else now_iso,
+                last_seen_at=now_iso,
+            )
+        if not updates:
+            return {}
         if persist and not self._in_memory:
-            self._save_atomic(key, entry)
+            self._save_atomic(updates=updates)
         else:
-            self._entries[key] = entry
-        return entry
+            for key, entry in updates.items():
+                existing = self._entries.get(key)
+                if existing is not None and existing.fingerprint != entry.fingerprint:
+                    raise CertificateMismatchError(
+                        f"TLS certificate fingerprint mismatch for {key}: "
+                        f"expected {existing.fingerprint}, got {entry.fingerprint}. No request was sent."
+                    )
+            self._entries.update(updates)
+        return updates
 
-    def _save_atomic(self, updated_key: str | None = None, updated_entry: KnownHostEntry | None = None) -> None:
+    def _save_atomic(
+        self,
+        updated_key: str | None = None,
+        updated_entry: KnownHostEntry | None = None,
+        *,
+        updates: Mapping[str, KnownHostEntry] | None = None,
+    ) -> None:
         """Atomically merge and write `self._entries` to `self._path` with `fcntl.flock` and mode `0600`."""
         parent = self._path.parent
         lock_path = parent / f".{self._path.name}.lock"
+        pending: dict[str, KnownHostEntry] = dict(updates) if updates else {}
+        if updated_key is not None and updated_entry is not None:
+            pending[updated_key] = updated_entry
         try:
             self._validate_parent_dir_security(parent)
             if not parent.exists():
@@ -439,15 +479,15 @@ class TrustStore:
                 for k, v in self._entries.items():
                     if k not in merged:
                         merged[k] = v
-                if updated_key is not None and updated_entry is not None:
-                    existing_on_disk = disk_entries.get(updated_key)
-                    if existing_on_disk is not None and existing_on_disk.fingerprint != updated_entry.fingerprint:
+                for k, v in pending.items():
+                    existing_on_disk = disk_entries.get(k)
+                    if existing_on_disk is not None and existing_on_disk.fingerprint != v.fingerprint:
                         raise CertificateMismatchError(
-                            f"TLS certificate fingerprint mismatch for {updated_key} during concurrent TOFU merge: "
-                            f"expected {existing_on_disk.fingerprint}, got {updated_entry.fingerprint}. "
+                            f"TLS certificate fingerprint mismatch for {k} during concurrent TOFU merge: "
+                            f"expected {existing_on_disk.fingerprint}, got {v.fingerprint}. "
                             "No request was sent."
                         )
-                    merged[updated_key] = updated_entry
+                merged.update(pending)
 
                 payload = {
                     "version": 1,
@@ -684,14 +724,33 @@ class TrustPolicy:
             )
         matched_entry = stored_entry if stored_entry is not None else stored_id_entry
         if matched_entry is not None:
-            if stored_entry is None and stored_id_entry is not None and self._mode in ("tofu", "lab-memory"):
-                self._store.record(
-                    host,
-                    port,
-                    presented,
-                    source="known-identity",
-                    persist=(self._mode == "tofu"),
-                )
+            if self._mode in ("tofu", "lab-memory"):
+                persist_known = self._mode == "tofu"
+                missing_targets: list[tuple[str, int]] = []
+                if stored_entry is None and stored_id_entry is not None:
+                    missing_targets.append((host, port))
+                if stored_id_entry is None and id_host is not None and id_key != key:
+                    missing_targets.append((id_host, port))
+                if missing_targets:
+                    try:
+                        self._store.record_many(
+                            missing_targets,
+                            presented,
+                            source="known-identity",
+                            persist=persist_known,
+                        )
+                    except CertificateMismatchError:
+                        span_attrs(tls_decision="mismatch")
+                        logger.error(
+                            "tls_certificate_mismatch",
+                            event="tls_certificate_mismatch",
+                            host=host,
+                            port=port,
+                            presented_fingerprint=presented,
+                            mode=self._mode,
+                            source="tofu_concurrent_merge",
+                        )
+                        raise
             decision_by_source = {
                 "tofu": "tofu_match",
                 "stored": "stored_match",
@@ -706,21 +765,28 @@ class TrustPolicy:
         if self._is_fingerprint_trusted_elsewhere(presented):
             if self._mode in ("tofu", "lab-memory"):
                 persist_known = self._mode == "tofu"
-                self._store.record(
-                    host,
-                    port,
-                    presented,
-                    source="known-identity",
-                    persist=persist_known,
-                )
+                targets: list[tuple[str, int]] = [(host, port)]
                 if id_host is not None and id_key != key:
-                    self._store.record(
-                        id_host,
-                        port,
+                    targets.append((id_host, port))
+                try:
+                    self._store.record_many(
+                        targets,
                         presented,
                         source="known-identity",
                         persist=persist_known,
                     )
+                except CertificateMismatchError:
+                    span_attrs(tls_decision="mismatch")
+                    logger.error(
+                        "tls_certificate_mismatch",
+                        event="tls_certificate_mismatch",
+                        host=host,
+                        port=port,
+                        presented_fingerprint=presented,
+                        mode=self._mode,
+                        source="tofu_concurrent_merge",
+                    )
+                    raise
             span_attrs(tls_decision="known_identity_match")
             return presented
 
@@ -741,10 +807,11 @@ class TrustPolicy:
             )
 
         if self._mode == "tofu":
+            targets = [(host, port)]
+            if id_host is not None and id_key != key:
+                targets.append((id_host, port))
             try:
-                self._store.record(host, port, presented, source="tofu", persist=True)
-                if id_host is not None and id_key != key:
-                    self._store.record(id_host, port, presented, source="tofu", persist=True)
+                self._store.record_many(targets, presented, source="tofu", persist=True)
             except CertificateMismatchError:
                 span_attrs(tls_decision="mismatch")
                 logger.error(
@@ -769,9 +836,10 @@ class TrustPolicy:
             return presented
 
         # mode == "lab-memory"
-        self._store.record(host, port, presented, source="lab-memory", persist=False)
+        targets = [(host, port)]
         if id_host is not None and id_key != key:
-            self._store.record(id_host, port, presented, source="lab-memory", persist=False)
+            targets.append((id_host, port))
+        self._store.record_many(targets, presented, source="lab-memory", persist=False)
         span_attrs(tls_decision="lab_memory_first_contact")
         logger.warning(
             "tls_tofu_first_contact",

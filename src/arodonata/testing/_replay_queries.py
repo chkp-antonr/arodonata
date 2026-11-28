@@ -6,7 +6,14 @@ import copy
 from collections import deque
 from typing import Any
 
-from ._emulator_projection import extract_ref_uids, iter_flat_rule_entries
+from ._emulator_projection import (
+    ACCESS_CELL_LIST_FIELDS,
+    HTTPS_CELL_LIST_FIELDS,
+    NAT_REF_COLS,
+    THREAT_CELL_LIST_FIELDS,
+    extract_ref_uids,
+    iter_flat_rule_entries,
+)
 
 SHOW_OBJECTS_TYPE_TO_CMD: dict[str, str] = {
     "host": "show-hosts",
@@ -52,19 +59,6 @@ SHOW_OBJECTS_TEXT_FIELDS: tuple[str, ...] = (
     "protocol",
     "ip-protocol",
     "fqdn",
-)
-
-ACCESS_WHERE_USED_COLS: tuple[str, ...] = ("source", "destination", "service", "vpn", "time", "install-on")
-HTTPS_WHERE_USED_COLS: tuple[str, ...] = ("source", "destination", "service", "site-category", "install-on")
-THREAT_WHERE_USED_COLS: tuple[str, ...] = ("protected-scope", "source", "destination", "service", "install-on")
-NAT_WHERE_USED_COLS: tuple[str, ...] = (
-    "original-source",
-    "original-destination",
-    "original-service",
-    "translated-source",
-    "translated-destination",
-    "translated-service",
-    "install-on",
 )
 
 
@@ -296,11 +290,11 @@ def build_where_used_response(
                     layer_to_pkg[str(lyr["name"])] = pkg_ref
 
     layer_scans = (
-        ("show-access-rulebase", ACCESS_WHERE_USED_COLS, "access-rule", "access-layer", "access-control-rules"),
-        ("show-https-rulebase", HTTPS_WHERE_USED_COLS, "https-rule", "https-layer", "https-rules"),
+        ("show-access-rulebase", ACCESS_CELL_LIST_FIELDS, "access-rule", "access-layer", "access-control-rules"),
+        ("show-https-rulebase", HTTPS_CELL_LIST_FIELDS, "https-rule", "https-layer", "https-rules"),
         (
             "show-threat-rulebase",
-            THREAT_WHERE_USED_COLS,
+            THREAT_CELL_LIST_FIELDS,
             "threat-rule",
             "threat-layer",
             "threat-prevention-rules",
@@ -366,7 +360,7 @@ def build_where_used_response(
             raw_nat_rb = nat_payload.get("rulebase")
             flat_rules = iter_flat_rule_entries(raw_nat_rb if isinstance(raw_nat_rb, list) else [])
             for idx, (_, rule) in enumerate(flat_rules, start=1):
-                col_uids = {col: extract_ref_uids(rule.get(col)) for col in NAT_WHERE_USED_COLS}
+                col_uids = {col: extract_ref_uids(rule.get(col)) for col in NAT_REF_COLS}
                 direct_cols = [col for col, uids in col_uids.items() if target_uid in uids]
                 indirect_cols = (
                     [col for col, uids in col_uids.items() if ancestor_group_uids & uids] if indirect else []

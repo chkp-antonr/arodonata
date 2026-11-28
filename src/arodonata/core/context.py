@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
@@ -19,6 +19,7 @@ from arodonata.core.errors import (
     SessionError,
     TransportError,
     is_sensitive_key,
+    redact_sid,
 )
 from arodonata.core.models.common import ApiCallResult
 from arodonata.core.models.objects import CPObject
@@ -693,6 +694,19 @@ async def open_api_write_session(
         yield bound_ws
 
 
+def _sanitize_overlay_value(val: Any) -> Any:
+    """Recursively omit sensitive mapping keys and redact SIDs in overlay payloads."""
+    if isinstance(val, Mapping):
+        return {k: _sanitize_overlay_value(v) for k, v in val.items() if not is_sensitive_key(str(k))}
+    if isinstance(val, list):
+        return [_sanitize_overlay_value(item) for item in val]
+    if isinstance(val, tuple):
+        return tuple(_sanitize_overlay_value(item) for item in val)
+    if isinstance(val, str):
+        return redact_sid(val)
+    return val
+
+
 def update_overlay_from_command(
     overlay: SessionOverlay,
     command: str,
@@ -715,10 +729,12 @@ def update_overlay_from_command(
     resp_data = result.data if isinstance(result.data, dict) else {}
 
     if verb in ("add", "set"):
-        merged_raw = {k: v for k, v in req_data.items() if not is_sensitive_key(k)}
-        for k, v in resp_data.items():
-            if not is_sensitive_key(k):
-                merged_raw[k] = v
+        clean_req = _sanitize_overlay_value(req_data)
+        clean_resp = _sanitize_overlay_value(resp_data)
+        merged_raw: dict[str, Any] = {
+            **(clean_req if isinstance(clean_req, dict) else {}),
+            **(clean_resp if isinstance(clean_resp, dict) else {}),
+        }
         if "type" not in merged_raw or not merged_raw.get("type"):
             merged_raw["type"] = target_type
         uid = str(merged_raw.get("uid") or "")

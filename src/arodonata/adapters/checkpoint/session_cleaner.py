@@ -6,7 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from arodonata.adapters.checkpoint.rate_limiter import RateLimiter
-from arodonata.adapters.checkpoint.target_resolver import logger
+from arodonata.adapters.checkpoint.target_resolver import logger, resolve_tls_identity_host
 from arodonata.adapters.checkpoint.transport import ApiTransport
 from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import AuthContext, get_auth_context, normalize_domain_key
@@ -119,7 +119,7 @@ class SessionCleaner:
             return False
 
         dom_key = normalize_domain_key(domain)
-        endpoint = self._login_coordinator.get_server_endpoint(mgmt_name)
+        self._login_coordinator.get_server_endpoint(mgmt_name)
         span_attrs(mgmt_name=mgmt_name, domain=dom_key)
 
         try:
@@ -165,23 +165,27 @@ class SessionCleaner:
             return False
 
         try:
-            _, mds_ip, _ = await self._login_coordinator.resolve_target_ips(
+            pinned_ip, mds_ip, port = await self._login_coordinator.resolve_target_ips(
                 mgmt_name,
                 domain,
                 explicit_server_ip=server_ip,
             )
+            tls_identity_host = resolve_tls_identity_host(server_ip, pinned_ip) or (
+                self._login_coordinator.get_tls_identity_host(mgmt_name, sid)
+            )
             async with self._rate_limiter.slot(mds_ip):
                 res = await self._transport.execute(
-                    server_ip,
+                    pinned_ip,
                     "show-sessions",
                     {
                         "details-level": "standard",
                         "limit": 100,
                         "view-published-sessions": False,
                     },
-                    port=endpoint.port,
+                    port=port,
                     sid=sid,
                     timeout=self._settings.api_timeout,
+                    tls_identity_host=tls_identity_host,
                 )
 
             if res.success:
@@ -217,12 +221,13 @@ class SessionCleaner:
                         )
                         async with self._rate_limiter.slot(mds_ip):
                             await self._transport.execute(
-                                server_ip,
+                                pinned_ip,
                                 "discard",
                                 {"uid": target_uid},
-                                port=endpoint.port,
+                                port=port,
                                 sid=sid,
                                 timeout=self._settings.api_timeout,
+                                tls_identity_host=tls_identity_host,
                             )
                         if cached_entry is not None:
                             logged_out = False

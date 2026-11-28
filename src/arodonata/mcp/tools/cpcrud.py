@@ -6,7 +6,7 @@ import hmac
 import secrets
 import uuid
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Sequence
 from typing import Any, Literal
 
 import arlogi
@@ -44,23 +44,28 @@ def _select_store_eviction_key[KeyT: Hashable](
     owner_of: Callable[[KeyT], str],
     *,
     exclude_key: KeyT | None = None,
+    exclude_keys: Sequence[KeyT] | set[KeyT] | frozenset[KeyT] = (),
     allow_single_peer_fallback: bool = True,
 ) -> KeyT | None:
     """Pick the oldest entry to evict while protecting single-session peer callers (`DA-032`)."""
-    same_owner_key = next((k for k in store if owner_of(k) == owner_id and k != exclude_key), None)
+    excluded = set(exclude_keys)
+    if exclude_key is not None:
+        excluded.add(exclude_key)
+    same_owner_key = next((k for k in store if owner_of(k) == owner_id and k not in excluded), None)
     if same_owner_key is not None:
         return same_owner_key
     owner_counts: dict[str, int] = defaultdict(int)
     for k in store:
-        owner_counts[owner_of(k)] += 1
+        if k not in excluded:
+            owner_counts[owner_of(k)] += 1
     greedy_peer_key = next(
-        (k for k in store if k != exclude_key and owner_counts.get(owner_of(k), 0) > 1),
+        (k for k in store if k not in excluded and owner_counts.get(owner_of(k), 0) > 1),
         None,
     )
     if greedy_peer_key is not None:
         return greedy_peer_key
     if allow_single_peer_fallback:
-        return next((k for k in store if k != exclude_key), None)
+        return next((k for k in store if k not in excluded), None)
     return None
 
 
@@ -153,37 +158,81 @@ def register_cpcrud_tools(
                 error=redact_sid(str(exc), known_sids=known_ev_sids),
             )
 
-    async def _store_staged_session(
+    async def _discard_staged_batch(
         client: ArodonataClient,
         owner_id: str,
-        info: StagedSessionInfo,
+        staged_items: Sequence[StagedSessionInfo],
     ) -> None:
-        if not info.session_uid or not info.session_uid.strip():
-            return
-        clean_uid = info.session_uid.strip()
-        key = (owner_id, info.mgmt_name, normalize_domain_key(info.domain_name), clean_uid)
-        if key not in staged_session_store:
-            while len(staged_session_store) >= MAX_STORED_PLANS:
-                evict_key = _select_store_eviction_key(
-                    staged_session_store,
-                    owner_id,
-                    lambda k: k[0],
-                    exclude_key=key,
-                    allow_single_peer_fallback=False,
+        for info in staged_items:
+            if info.session_uid and info.session_uid.strip():
+                await shielded_best_effort(
+                    _discard_staged_entry(client, owner_id, info.mgmt_name, info.session_uid.strip(), info)
                 )
-                if evict_key is None:
-                    await shielded_best_effort(_discard_staged_entry(client, owner_id, info.mgmt_name, clean_uid, info))
-                    raise ToolFailure(
-                        f"Staged session registry is full ({MAX_STORED_PLANS} active single-caller sessions); "
-                        "publish or discard an existing staged session before creating another.",
-                        mgmt_name=info.mgmt_name,
-                        domain=info.domain_name,
-                    )
+
+    async def _store_staged_session_batch(
+        client: ArodonataClient,
+        owner_id: str,
+        staged_items: Sequence[StagedSessionInfo],
+    ) -> None:
+        """Atomically reserve capacity and register every staged session from a single `apply()` batch."""
+        batch_entries: list[tuple[tuple[str, str, str, str], StagedSessionInfo]] = []
+        seen_batch_keys: set[tuple[str, str, str, str]] = set()
+        for info in staged_items:
+            if not info.session_uid or not info.session_uid.strip():
+                continue
+            clean_uid = info.session_uid.strip()
+            key = (owner_id, info.mgmt_name, normalize_domain_key(info.domain_name), clean_uid)
+            if key not in seen_batch_keys:
+                seen_batch_keys.add(key)
+                batch_entries.append((key, info))
+        if not batch_entries:
+            return
+
+        new_keys = [k for k, _info in batch_entries if k not in staged_session_store]
+        if len(new_keys) > MAX_STORED_PLANS:
+            await _discard_staged_batch(client, owner_id, staged_items)
+            raise ToolFailure(
+                f"Staged session batch exceeds maximum store capacity ({MAX_STORED_PLANS} entries).",
+                mgmt_name=batch_entries[0][1].mgmt_name,
+                domain=batch_entries[0][1].domain_name,
+            )
+
+        # Pre-compute the exact eviction plan before mutating `staged_session_store`
+        evict_plan: list[tuple[str, str, str, str]] = []
+        sim_store = OrderedDict(staged_session_store)
+        needed_evictions = max(0, len(staged_session_store) + len(new_keys) - MAX_STORED_PLANS)
+        for _ in range(needed_evictions):
+            evict_key = _select_store_eviction_key(
+                sim_store,
+                owner_id,
+                lambda k: k[0],
+                exclude_keys=seen_batch_keys,
+                allow_single_peer_fallback=False,
+            )
+            if evict_key is None:
+                await _discard_staged_batch(client, owner_id, staged_items)
+                raise ToolFailure(
+                    f"Staged session registry is full ({MAX_STORED_PLANS} active single-caller sessions); "
+                    "publish or discard an existing staged session before creating another.",
+                    mgmt_name=batch_entries[0][1].mgmt_name,
+                    domain=batch_entries[0][1].domain_name,
+                )
+            sim_store.pop(evict_key)
+            evict_plan.append(evict_key)
+
+        try:
+            for evict_key in evict_plan:
                 ev_info = staged_session_store.pop(evict_key)
                 ev_owner, ev_mgmt, _ev_dom_key, ev_uid = evict_key
-                await _discard_staged_entry(client, ev_owner, ev_mgmt, ev_uid, ev_info)
-        staged_session_store[key] = info
-        staged_session_store.move_to_end(key)
+                await shielded_best_effort(_discard_staged_entry(client, ev_owner, ev_mgmt, ev_uid, ev_info))
+            for key, info in batch_entries:
+                staged_session_store[key] = info
+                staged_session_store.move_to_end(key)
+        except BaseException:
+            for key in new_keys:
+                staged_session_store.pop(key, None)
+            await _discard_staged_batch(client, owner_id, staged_items)
+            raise
 
     def _resolve_verified_plan(
         plan: dict[str, Any] | None,
@@ -308,9 +357,8 @@ def register_cpcrud_tools(
             _store_plan_entry(caller_id, eff_plan_id, parsed_plan, report)
         else:
             _record_last_report(caller_id, report)
-        if no_publish and keep_session:
-            for st_info in report.staged_sessions:
-                await _store_staged_session(client, caller_id, st_info)
+        if no_publish and keep_session and report.staged_sessions:
+            await _store_staged_session_batch(client, caller_id, report.staged_sessions)
         report_dict = report.model_dump(mode="json")
         if eff_plan_id:
             report_dict["plan_id"] = eff_plan_id

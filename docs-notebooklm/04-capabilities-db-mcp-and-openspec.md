@@ -1463,6 +1463,13 @@ Both wheel and source distribution (`sdist`) builds of the `arodonata` package M
 - **THEN** wheel packages SHALL include only `src/arodonata`
 - **AND** source distributions SHALL exclude `plugins/` and `docs-notebooklm/`
 
+#### Scenario: SCN-AIBUILD-001-2 — Built wheel and sdist artifacts exclude populated plugins and docs-notebooklm directories
+
+- **GIVEN** `plugins/arodonata-aibuilder/` and `docs-notebooklm/` contain tracked files in the repository
+- **WHEN** Hatchling wheel and sdist build file sets are constructed from `pyproject.toml`
+- **THEN** the wheel artifact SHALL include only `arodonata` Python package files and package metadata
+- **AND** the sdist artifact SHALL exclude every entry under `plugins/` and `docs-notebooklm/`
+
 ### Requirement: Check Point API and Operational Quirks Knowledge Bundle
 
 **ID**: REQ-AIBUILD-002\
@@ -1505,6 +1512,86 @@ The documentation bundle build MUST generate a deterministic, compact Markdown S
 - **WHEN** the documentation bundle build generates `docs-notebooklm/05-sdk-quickref.md`
 - **THEN** lambda-backed defaults SHALL render valid Python expressions without invalid `lambda: ...()` syntax
 - **AND** `FileReplayApiMock` and `CheckPointReplayHttpServer` sections SHALL include all public methods and properties without `[:8]` truncation
+
+### Requirement: Multi-Agent Plugin Manifest and Skill Entry Contract
+
+**ID**: REQ-AIBUILD-004\
+**Intent**: Ship a portable, version-synchronized multi-agent plugin bundle usable in Antigravity, Claude Code, Codex CLI, Cursor, and Gemini CLI.\
+**Non-goals**: Bundling pre-configured live Check Point MCP server credentials or environment-specific TLS trust stores inside the plugin.
+
+The repository MUST provide a self-contained plugin at `plugins/arodonata-aibuilder/` containing an Antigravity `plugin.json` using strictly supported top-level fields, a Claude Code `.claude-plugin/plugin.json` manifest synchronized with `arodonata.__version__`, an English multi-agent `README.md`, and a portable `skills/arodonata-aibuilder/SKILL.md` entry point without bundling unconfigured MCP server definitions.
+
+#### Scenario: SCN-AIBUILD-004-1 — Antigravity and Claude Code manifests match schema and package version
+
+- **GIVEN** `plugins/arodonata-aibuilder/plugin.json` and `plugins/arodonata-aibuilder/.claude-plugin/plugin.json` exist in the repository
+- **WHEN** both JSON manifests are parsed and compared against `arodonata.__version__` and `pyproject.toml` commitizen configuration
+- **THEN** `plugin.json` SHALL contain only allowed Antigravity top-level fields (`name`, `displayName`, `description`, `version`, `author`, `homepage`, `repository`, `suggestedPrompts`) with `name == "arodonata-aibuilder"` and up to three non-empty `suggestedPrompts`
+- **AND** both manifests SHALL match `arodonata.__version__`, appear in `[tool.commitizen].version_files`, and omit any bundled `mcp_config.json`
+
+#### Scenario: SCN-AIBUILD-004-2 — Universal skill entry point exposes valid frontmatter and progressive-disclosure links
+
+- **GIVEN** `plugins/arodonata-aibuilder/skills/arodonata-aibuilder/SKILL.md` and `plugins/arodonata-aibuilder/README.md` exist
+- **WHEN** YAML frontmatter and relative Markdown references inside `SKILL.md` are inspected
+- **THEN** `SKILL.md` SHALL declare `name: arodonata-aibuilder` and a non-empty `description` covering Check Point automation with Arodonata
+- **AND** every referenced `references/*.md` and `templates/*` path SHALL resolve to an existing file inside the skill directory
+
+### Requirement: Deterministic Skill Reference Synchronization
+
+**ID**: REQ-AIBUILD-005\
+**Intent**: Keep skill-bundled SDK signatures and Check Point quirk references synchronized with `src/arodonata` and `docs/troubleshooting/` without manual copy-paste drift.\
+**Non-goals**: Overwriting hand-authored CLI architecture or replay-testing skill guides during doc rebuilds.
+
+The documentation bundle build MUST deterministically synchronize `sdk-quickref.md`, `checkpoint-api-quirks.md`, and `checkpoint-ops-quirks.md` into `plugins/arodonata-aibuilder/skills/arodonata-aibuilder/references/` with all snippets resolved and byte-identical to canonical documentation sources, while preserving hand-authored CLI and replay-testing references free of live secrets or session identifiers.
+
+#### Scenario: SCN-AIBUILD-005-1 — Synced skill references match canonical quickref and quirk sources byte-for-byte
+
+- **GIVEN** canonical documentation in `docs/troubleshooting/` and the current `src/arodonata` source tree
+- **WHEN** `sync_plugin_references()` runs during the documentation bundle build
+- **THEN** `references/sdk-quickref.md` SHALL be byte-identical to `docs-notebooklm/05-sdk-quickref.md`
+- **AND** `references/checkpoint-api-quirks.md` and `references/checkpoint-ops-quirks.md` SHALL match their snippet-resolved canonical sources with zero `[MISSING SNIPPET:` markers
+
+#### Scenario: SCN-AIBUILD-005-2 — Hand-authored references are preserved and satisfy security hygiene
+
+- **GIVEN** hand-authored `references/cli-architecture-and-arlogi.md` and `references/replay-testing-guide.md` exist alongside synced references
+- **WHEN** `sync_plugin_references()` executes and all Markdown files under `plugins/arodonata-aibuilder/` are inspected
+- **THEN** hand-authored reference files SHALL remain intact without being overwritten or deleted
+- **AND** no file under `plugins/arodonata-aibuilder/` SHALL contain live secrets, `X-chkp-sid:` headers, or private key blocks
+
+### Requirement: Runnable Script and Offline Replay Starter Templates
+
+**ID**: REQ-AIBUILD-006\
+**Intent**: Give AI coding agents ready-to-adapt, verified Python 3.13 / `uv` CLI script and offline `FileReplayApiMock` test starters that compile and pass immediately.\
+**Non-goals**: Shipping customer-specific playbooks or live SmartCenter integration harnesses inside the starter templates.
+
+The `arodonata-aibuilder` skill MUST include verified starter templates under `templates/` providing a single-file PEP 723 `uv` script (`cli_script_pep723.py`), a multi-file `uv` project manifest (`cli_project_pyproject.toml`), and an offline replay test (`test_script_replay.py`) demonstrating `ArodonataClient`, native `Asset` classification, `arlogi`, and `FileReplayApiMock`.
+
+#### Scenario: SCN-AIBUILD-006-1 — Starter Python and TOML templates parse cleanly and follow SDK conventions
+
+- **GIVEN** `cli_script_pep723.py`, `cli_project_pyproject.toml`, and `test_script_replay.py` exist under `plugins/arodonata-aibuilder/skills/arodonata-aibuilder/templates/`
+- **WHEN** the Python templates are parsed with `ast.parse` and the TOML template is parsed with `tomllib.loads`
+- **THEN** all templates SHALL parse without syntax errors and reference `arodonata` and `arlogi`
+- **AND** `cli_script_pep723.py` SHALL include a PEP 723 `# /// script` block, `arlogi.setup_logging(..., json_file_only=False)`, `--dry-run`, and native `Asset` classification filtering
+
+#### Scenario: SCN-AIBUILD-006-2 — Starter replay template executes offline against FileReplayApiMock
+
+- **GIVEN** `templates/test_script_replay.py` is loaded in an offline test environment with no network access
+- **WHEN** its replay test coroutine executes against `FileReplayApiMock` and `ArodonataClient`
+- **THEN** the test SHALL pass cleanly, verifying mocked Check Point asset/object retrieval and native `Asset` role/platform classification without live credentials
+
+### Requirement: Plugin Replay Documentation Accuracy and Governance Port-Summary Alignment
+
+**ID**: REQ-AIBUILD-007\
+**Intent**: Keep AI-builder plugin testing documentation and repository governance docs aligned with actual `FileReplayApiMock`, `ArodonataSettings`, and hexagonal port boundaries.\
+**Non-goals**: Adding new starter templates or changing plugin manifest fields (`REQ-AIBUILD-004`).
+
+`plugins/arodonata-aibuilder/skills/arodonata-aibuilder/references/replay-testing-guide.md` MUST document only valid `FileReplayApiMock` `manage_repository_scripts` modes (`"write"`, `"read"`, `"none"`) and valid `ArodonataSettings` parameters (`mgmt_ip`, `mgmt_port`, `tls_trust`, `tls_fingerprints`, `server.snapshot_state()`). Repository governance docs (`AGENTS.md`, `openspec/config.yaml`) MUST accurately reflect `LockPort` and segregated `CachePort` sub-protocols.
+
+#### Scenario: SCN-AIBUILD-007-1 — Plugin replay guide and governance port docs match live SDK and testing contracts
+
+- **GIVEN** `plugins/arodonata-aibuilder/skills/arodonata-aibuilder/references/replay-testing-guide.md`, `AGENTS.md`, and `openspec/config.yaml`
+- **WHEN** documented `FileReplayApiMock` modes, `ArodonataSettings` / `CheckPointReplayHttpServer` snippets, and `core` hexagonal port summaries are checked against `src/arodonata`
+- **THEN** `replay-testing-guide.md` SHALL reference only `"write"`, `"read"`, `"none"` and valid `ArodonataSettings` / `CheckPointReplayHttpServer` APIs
+- **AND** `AGENTS.md` and `openspec/config.yaml` SHALL name `LockPort` and segregated `CachePort` sub-protocols alongside `ApiPort`
 
 
 ---
@@ -2030,6 +2117,35 @@ When `ArodonataClient` synchronizes cached domain slices (`objects`, `services`,
 - **WHEN** `DatabaseManager.initialize()` opens the SQLite engine
 - **THEN** symlinks and non-regular files SHALL fail closed before SQLite opens them, and pre-existing regular files with group/other permission bits SHALL be tightened to `0o600`
 
+### Requirement: Hardened SQLite Paths, Race-Free VSX Reconciliation, and Unified Search Filtering
+
+**ID**: REQ-CACHE-021\
+**Intent**: Prevent SQLite permission bypasses, cross-domain VSX upsert races, stale cold-failure timestamps, discovery secret leaks, and search filter inconsistencies.\
+**Non-goals**: Changing SQLite/PostgreSQL schema table columns or `Asset` classification taxonomy (`REQ-CACHE-019`).
+
+Database initialization MUST validate regular-file/symlink safety and `0o600` permissions even on concurrent creation or injected SQLite engines. Cross-domain VSX reconciliation MUST update only VSX-linking columns on existing rows, cold failures MUST preserve `synced_at=None`, discovery logs and `ApiQueryResult.__repr__` MUST scrub secrets, and search MUST handle `ip_subnet` on `Asset` and `types=[]`.
+
+#### Scenario: SCN-CACHE-021-1 — SQLite hardening, cold failure synced_at, invalidation watermark, and discovery redaction
+
+- **GIVEN** concurrent SQLite file initialization or an injected file-backed SQLite engine, a failed cold domain sync, a mid-flight domain-list invalidation, or a failing `show-domains` response
+- **WHEN** `DatabaseManager` initializes, sync/discovery failures record state, or `DomainListRefreshTracker.mark_refreshed()` completes
+- **THEN** SQLite paths SHALL verify non-symlink regular files with `0o600` mode, cold failed slices SHALL retain `synced_at=None`, and mid-flight invalidations SHALL remain preserved
+- **AND** domain discovery warnings and `ApiQueryResult.__repr__` SHALL redact SIDs and secrets
+
+#### Scenario: SCN-CACHE-021-2 — Race-free partial VSX reconciliation and strict member exclusions
+
+- **GIVEN** concurrent per-domain `refresh_assets()` runs alongside cross-domain VSX reconciliation, or mixed cluster/VSX payloads containing Virtual Systems and VSX cluster members
+- **WHEN** `reconcile_cross_domain()` persists VSX links or `ClusterRelationshipManager.enrich()` links hierarchy relationships
+- **THEN** cross-domain reconciliation SHALL update only VSX-linking columns conditionally on existing rows without overwriting concurrent domain refreshes or resurrecting deleted assets
+- **AND** Virtual Systems SHALL be excluded from cluster member lists and VSX members excluded from VSX parent candidates per `SCN-CACHE-019-5`
+
+#### Scenario: SCN-CACHE-021-3 — Asset ip_subnet matching, empty types=[] short-circuit, and shared type partitioning
+
+- **GIVEN** cached `Asset` rows with primary or interface IPs queried with `ip_subnet`, or a `search_objects()` / `query_objects()` call with `types=[]`
+- **WHEN** `SearchService` partitions entity types and evaluates queries
+- **THEN** `query_objects(ip_subnet=...)` SHALL evaluate CIDR/range containment against `Asset` primary and interface IPv4 addresses
+- **AND** explicit `types=[]` SHALL return zero matches without refreshing or querying default types via one unified type-partitioning helper
+
 
 ---
 
@@ -2291,6 +2407,28 @@ The change report builder SHALL number added, modified, moved, and deleted rules
 - **GIVEN** a `RangeScope(to_session=..., from_date=..., to_date=...)` alongside a `SessionScope` whose `OwnedSession` fails on initial `show-session`
 - **WHEN** `collect_change_report()` discovers target sessions and collects metadata/changes/UIDs
 - **THEN** `show-sessions` SHALL omit `from` and `to` date parameters when `to_session` is set, `WarningCode` SHALL validate `"range_session_not_found"`, and `_OwnedSessionContext` SHALL disable the failing `OwnedSession` once with a single warning so subsequent calls never reuse it
+
+### Requirement: Backslash-Safe Markdown Escaping, Owned-Session Fallback, and Partial-Slice Warming
+
+**ID**: REQ-REPORT-010\
+**Intent**: Prevent Markdown table/link escape bypasses, keep healthy `OwnedSession` instances active across single `show-object` 404s, warm partial rulebase slices, and align `WarningCode`.\
+**Non-goals**: Changing HTML report styling or Check Point `show-changes` task polling intervals.
+
+Markdown cell and inline sanitizers across reports and rulebase filters MUST escape literal backslashes before delimiter characters via shared core helpers. Single `show-object` 404 errors MUST fall back read-only without disabling healthy `OwnedSession` contexts, partial single-package slices MUST trigger full-domain warming, and `WarningCode` MUST include `"range_session_timestamp_missing"`.
+
+#### Scenario: SCN-REPORT-010-1 — Backslash-safe Markdown cell and inline escaping
+
+- **GIVEN** Check Point rule or object fields containing backslashes followed by `[`, `]`, `|`, or backticks
+- **WHEN** change reports or filtered rulebase Markdown tables render those fields
+- **THEN** shared escaping helpers SHALL escape literal backslashes prior to Markdown delimiters so active links and GFM table column splits are prevented
+- **AND** inline code spans SHALL preserve ordinary backslashes without breaking table cells
+
+#### Scenario: SCN-REPORT-010-2 — OwnedSession 404 recovery, partial-slice warming, and WarningCode completeness
+
+- **GIVEN** an unpublished `OwnedSession` encountering a single `show-object` 404, a cached domain holding only a partial `package:<type>:<uid>` rulebase slice without `item_type="*"`, or a `RangeScope` session missing timestamps
+- **WHEN** `collect_change_report()` resolves UIDs, places rule numbers, or emits `ReportWarning` codes
+- **THEN** a single `show-object` 404 SHALL retry read-only without disabling `OwnedSession` for subsequent lookups or live numbering
+- **AND** missing full-domain sync state (`sync_state is None`) SHALL trigger coordinator warming and `WarningCode` SHALL declare `"range_session_timestamp_missing"`
 
 
 ---
@@ -2907,6 +3045,21 @@ The system SHALL support hierarchical dotted-prefix span gating via `ARODONATA_T
 - **WHEN** `AMgmtClient.api_query()` exceeds `max_query_pages` or `max_query_objects`, OR `fetch_paged_rulebase()` exceeds `MAX_RULEBASE_OBJECTS`
 - **THEN** `api_query()` SHALL return `ApiQueryResult(success=False, code="paging_limit_exceeded")` before unbounded accumulation, and rulebase paging SHALL stop cleanly at the configured object cap
 
+### Requirement: Nested Pydantic Secret Serialization Masking
+
+**ID**: REQ-CONFIG-010\
+**Intent**: Prevent settings credentials and database passwords from leaking in plaintext when settings objects are nested inside parent Pydantic v2 models.\
+**Non-goals**: Changing top-level `ArodonataSettings` or `ArodonataMCPSettings` environment variable parsing.
+
+`ArodonataSettings` and `ArodonataMCPSettings` MUST enforce secret redaction via Pydantic field serializers so sensitive fields (`password`, `api_key`, `api_keys`, `database_url`, and `tokens`) remain masked in both direct and enclosing-model `model_dump()` and `model_dump_json()` serialization.
+
+#### Scenario: SCN-CONFIG-010-1 — Enclosing Pydantic models serialize nested settings without exposing secrets
+
+- **GIVEN** an `ArodonataSettings` or `ArodonataMCPSettings` instance containing credentials, API keys, bearer tokens, or a database URL password
+- **WHEN** an enclosing Pydantic `BaseModel` serializes the nested settings via `model_dump()` or `model_dump_json()`
+- **THEN** all sensitive fields SHALL be emitted as redacted placeholders or masked URLs in both Python dicts and JSON output
+- **AND** direct `model_dump()` and `model_dump_json()` calls on the settings models SHALL continue masking those fields
+
 
 ---
 
@@ -3446,6 +3599,28 @@ CPCRUD SHALL reject blank/duplicate IDs via shared verb parsing, preserve `ip_pr
 - **WHEN** concurrent applies execute or a new owner stages a 257th session
 - **THEN** each `Executor.apply()` call SHALL return its own isolated `ApplyReport` from the completion event without shared-attribute races, and staged registry eviction SHALL discard the new or greedy multi-session owner's oldest SID while preserving single-session peers
 
+### Requirement: Virtual Rule Cleanup Anchoring, Full Delta Overlays, and Context-Aware Staged Isolation
+
+**ID**: REQ-CPCRUD-019\
+**Intent**: Prevent intra-plan rules from landing below cleanup rules, bypassing anti-`Any`-widening guards, failing `where-used` checks, or evicting peer MCP callers' staged sessions.\
+**Non-goals**: Altering CPCRUD YAML/JSON template schema syntax (`REQ-CPCRUD-001`).
+
+Virtual rule overlays MUST preserve renamed indices, anchor created rules before trailing cleanup rules, apply incremental `{add, remove}` cell deltas and rule attributes, and fail closed on unnamed virtual rule updates/deletes. Virtual `where-used` filtering MUST recognize virtually deleted rules and active renamed entities, and `Executor` staged session tracking MUST isolate distinct `UserContext` callers without single-peer eviction.
+
+#### Scenario: SCN-CPCRUD-019-1 — Cleanup-safe virtual rule placement, delta overlays, and where-used accuracy
+
+- **GIVEN** a plan that renames or creates rules before adding `position="bottom"` rules, patches list cells via `{add, remove}` deltas, deletes or renames referenced entities, or targets an unnamed planned rule
+- **WHEN** the CPCRUD planner resolves rule positions, updates virtual overlays, checks `where-used`, or validates intra-plan targets
+- **THEN** renamed rules SHALL stay above trailing cleanup rules, virtual updates SHALL preserve `{add, remove}` deltas and rule fields for anti-`Any`-widening checks, and unnamed virtual rule mutations SHALL fail closed at plan time
+- **AND** `where-used` checks SHALL ignore virtually deleted rules and keep active renamed referencing entities
+
+#### Scenario: SCN-CPCRUD-019-2 — UserContext isolation and peer-safe eviction in Executor staged sessions
+
+- **GIVEN** distinct authenticated `UserContext` callers sharing one `ArodonataClient` / `Executor` without separate `AuthContext` credentials at full 256-entry capacity
+- **WHEN** `Executor` registers a newly staged Check Point session
+- **THEN** `owner_key` SHALL incorporate `UserContext` caller identity alongside `AuthContext`
+- **AND** eviction SHALL never discard a distinct single-session peer's uncommitted session
+
 
 ---
 
@@ -3931,6 +4106,34 @@ Topology and script services SHALL isolate per-VS bundle slice errors during VSX
 - **WHEN** topology resolution, targeted refresh, annotation lookup, or normalizer route parsing runs
 - **THEN** on-demand object/global resolutions SHALL NOT write to persistent SQL tables under an active `WriteSession`, targeted refresh SHALL call `verify_session_clean()`, CLI targets SHALL be scoped to `gateway_asset.mgmt_name`, annotations SHALL match all 4 canonical keys, and `mask-length: 0` SHALL normalize to prefix `/0`
 
+### Requirement: Read-Only Topology Cache Isolation, Accurate Route Parsing, and Unified Indexing
+
+**ID**: REQ-TOPO-024\
+**Intent**: Prevent `mode="cache"` SQL mutations, cold-domain route skips, dropped ECMP/`proto routed` routes, VSX bundle error masking, and drifted topology scoring or index lookups.\
+**Non-goals**: Changing default confidence score weights or adding new routing protocols.
+
+Targeted `refresh_topology(mode="cache")` MUST remain strictly read-only, `WriteSession` overlays MUST NOT leak into shared SQL topology tables, `collect_gateway_routes()` MUST hydrate missing requested domains, and single-flight coalescing MUST key on effective `cache_ttl`. CLI/API parsers and scoring MUST preserve ECMP/`proto routed` routes, `group-with-exclusion` `except` members, and same-interface live summaries.
+
+#### Scenario: SCN-TOPO-024-1 — Read-only cache mode, WriteSession isolation, TTL coalescing, and per-domain route hydration
+
+- **GIVEN** targeted `refresh_topology(gateways=..., mode="cache")`, an active `WriteSession` during topology refresh, concurrent callers with differing `cache_ttl`, or a partially cached multi-domain server in `collect_gateway_routes()`
+- **WHEN** topology refresh or route collection executes
+- **THEN** `mode="cache"` SHALL perform zero SQL writes and shared persistence SHALL ignore uncommitted `WriteSession` overlays
+- **AND** single-flight coalescing SHALL isolate distinct `cache_ttl` values while `collect_gateway_routes()` hydrates any uncached requested domain
+
+#### Scenario: SCN-TOPO-024-2 — Multi-line ECMP, Gaia proto routed, upstream bundle errors, and non-default destinations
+
+- **GIVEN** multi-line Linux/Gaia `ip -4 route show` ECMP output, Gaia `clish` `proto routed` routes, a failed VSX `run-script` missing the leader VS, or unresolved/`subnet4`/IPv6 route dictionaries
+- **WHEN** route parsers, VSX bundle extractors, or route destination normalizers execute via unified script builders
+- **THEN** multi-line ECMP legs and `proto routed` BGP/OSPF upgrades SHALL be preserved, failed `run-script` tasks SHALL NOT be flipped to `success=True`, and non-default unrecognized dicts SHALL return `None` instead of `0.0.0.0/0`
+
+#### Scenario: SCN-TOPO-024-3 — Exclusion groups, same-interface summary scoring, and case-insensitive object lookups
+
+- **GIVEN** a `group-with-exclusion` topology object, static prefixes covered by same-interface summary live routes or wildcard annotations, or mixed-case object references in topology indexing
+- **WHEN** topology object expansion, interface scoring, or index lookups run
+- **THEN** `group-with-exclusion` `except` members SHALL be excluded from expanded intervals and same-interface covering live routes / wildcard annotations SHALL suppress false conflict penalties
+- **AND** all topology object lookups SHALL resolve exact and `.lower()` keys uniformly through decomposed helper functions
+
 
 ---
 
@@ -4378,6 +4581,28 @@ The repository SHALL provide a runnable `examples/` catalog demonstrating Arodon
 - **WHEN** `switch-session`, read-only `disconnect`, or `reset()` / `restore_state()` runs
 - **THEN** `switch-session` SHALL rotate other active SIDs onto fresh work sessions, read-only `disconnect` on foreign sessions SHALL fail with HTTP 400, and `reset()` / `restore_state()` SHALL perform zero disk fixture reads
 
+### Requirement: Replay Emulator RBAC Parity, Group Locks, Protocol Guards, and Reference Consistency
+
+**ID**: REQ-ITEST-022\
+**Intent**: Align `FileReplayApiMock` and `CheckPointReplayHttpServer` strictly with Check Point session, RBAC, group, and command-validation semantics.\
+**Non-goals**: Simulating Check Point SmartConsole GUI interactions or hardware blade licensing.
+
+`FileReplayApiMock` MUST validate `manage_repository_scripts` (`"write"`, `"read"`, `"none"`), restore constructor RBAC flags on `reset()`, enforce group non-self-containment and cross-session parent locks, use `DROP_UID` for default access-rule tracking, and share rulebase reference-column constants. `CheckPointReplayHttpServer` MUST return JSON HTTP 400 on malformed command names, and policy verification/installation MUST enforce session and domain guards.
+
+#### Scenario: SCN-ITEST-022-1 — Constructor RBAC preservation, group lock/cycle checks, DROP_UID track, and shared ref columns
+
+- **GIVEN** `FileReplayApiMock` configured with custom RBAC flags or `reset()`, group `add`/`set` self-containment or cross-session parent edits, a Drop access rule, or `where-used` on an Access `content` column
+- **WHEN** `reset()`, group CRUD, access-rule creation, or `where-used` runs
+- **THEN** `manage_repository_scripts` SHALL validate `"write"`/`"read"`/`"none"` and `reset()` SHALL restore constructor flags
+- **AND** self-referential groups SHALL fail, cross-session parent locks SHALL block concurrent updates, Drop rules SHALL default to `None` track via `DROP_UID`, and `where-used` SHALL use shared projection reference columns
+
+#### Scenario: SCN-ITEST-022-2 — JSON 400 on malformed commands and session/domain guards on verify/install-policy
+
+- **GIVEN** a malformed command sent to `CheckPointReplayHttpServer` or a `verify-policy`/`install-policy` call on a locked, dirty, cross-domain, or read-only `FileReplayApiMock` session
+- **WHEN** the HTTP server dispatches the command or `handle_verify_or_install_policy()` evaluates the session
+- **THEN** malformed command names SHALL return Check Point JSON HTTP 400 instead of unhandled HTTP 500
+- **AND** `verify-policy` and `install-policy` SHALL enforce open-session, same-domain, zero-uncommitted-changes, and write-session guards consistently
+
 
 ---
 
@@ -4743,6 +4968,28 @@ MCP error hints SHALL reference `list_domains` rather than `show_domains`, `_upg
 - **WHEN** `format_invalid_credentials_failure()`, `_upgrade_uninitialized_cache_mode()`, object/asset tools, or `_store_staged_session()` executes
 - **THEN** credential errors SHALL instruct callers to run `list_domains`, `_upgrade_uninitialized_cache_mode()` SHALL upgrade when any requested domain is cold, `list_assets` and `query_objects` SHALL filter by `roles`/`platforms` (and target flags on `query_objects`), and `_store_staged_session()` SHALL evict greedy multi-slot owners first or discard and fail cleanly rather than evicting single-session peers
 
+### Requirement: Bounded MCP Report Scopes, Atomic Multi-Domain Staging, and Live Asset Filtering
+
+**ID**: REQ-MCP-018\
+**Intent**: Close MCP quota-amplification, caller-supplied session injection, multi-domain staged session leaks, and silent filter drops on live asset queries.\
+**Non-goals**: Changing MCP bearer authentication middleware or HMAC plan token signing (`REQ-MCP-009`).
+
+MCP `change_report` MUST cap total `session_uids`, charge live quota proportionally, and strip caller-supplied `owned_sessions` entries. Multi-domain `cpcrud_apply` staging MUST verify or roll back capacity atomically without self-evicting sibling domains or leaking unstored sessions, and `list_assets(..., cache_mode="live")` MUST honor `types`, `roles`, `platforms`, `parent`, and `filter`.
+
+#### Scenario: SCN-MCP-018-1 — Bounded session_uids quota and sanitized change_report scopes
+
+- **GIVEN** an MCP `change_report` request specifying many `session_uids` or caller-supplied `owned_sessions` entries in `scopes`
+- **WHEN** MCP validates arguments, charges live quota, and builds `SessionScope` inputs
+- **THEN** `change_report` SHALL reject requests exceeding the `session_uids` cap and charge live quota proportionally to requested session/scope fan-out
+- **AND** untrusted caller-supplied `owned_sessions` (`sid`/`server_ip`) SHALL be stripped before `collect_change_report()` runs
+
+#### Scenario: SCN-MCP-018-2 — Atomic multi-domain cpcrud_apply staging and live list_assets filtering
+
+- **GIVEN** a multi-domain `cpcrud_apply(no_publish=True, keep_session=True)` hitting `staged_session_store` capacity limits, or a `list_assets(..., cache_mode="live")` call with `types`, `roles`, `platforms`, `parent`, or `filter`
+- **WHEN** MCP registers staged sessions or executes `list_assets` in `live` mode
+- **THEN** `cpcrud_apply` SHALL pre-check or atomically roll back all staged sessions in the batch using shielded eviction without self-evicting sibling domains
+- **AND** `list_assets(..., cache_mode="live")` SHALL filter live hydrated assets locally by all supplied filter arguments
+
 
 ---
 
@@ -4949,6 +5196,21 @@ Rulebase snapshot collection SHALL fail closed on `paging_inconsistent` and non-
 - **GIVEN** a section mixing real-UID and missing-UID rules or a package referencing an empty Global-placeholder domain layer or unnamed empty inline layer
 - **WHEN** `fetch_paged_rulebase()` parses rules/sections or `locate_rules_in_snapshot()` indexes layer prefixes
 - **THEN** `sec.rule_uids` SHALL match parsed rule UIDs identically across rulebase types, and `locate_rules_in_snapshot()` SHALL emit the package prefix (`"2."`) without duplicate standalone `prefix=""` entries
+
+### Requirement: Case-Consistent Rulebase Lookup, Placeholder Precedence, and Decomposed Pagination
+
+**ID**: REQ-RULE-010\
+**Intent**: Eliminate empty rulebase loads caused by case mismatches, misattributed empty Global-placeholder layers, and monolithic pagination state bugs.\
+**Non-goals**: Altering Check Point SmartConsole hierarchical numbering syntax or rulebase cache table schemas.
+
+Rulebase loading and numbering MUST apply exact-match-first with case-insensitive fallback consistently across package and layer names. Global-placeholder domain layer attribution MUST take precedence over inline layer attribution on placeholder rules, and `fetch_paged_rulebase()` MUST isolate page accumulation and rule materialization into cohesive helpers.
+
+#### Scenario: SCN-RULE-010-1 — Case-insensitive package/layer fallback, placeholder precedence, and pagination helpers
+
+- **GIVEN** a mixed-case package or layer query matching cached rulebase data, a multi-package domain with an empty Global-placeholder domain layer, or a multi-page rulebase fetch experiencing mid-fetch `total` drift
+- **WHEN** `get_package_rulebase()`, `get_layer_rulebase()`, prefix tracking, or `fetch_paged_rulebase()` executes
+- **THEN** package and layer lookups SHALL resolve case-insensitively when exact case does not match, and empty Global-placeholder domain layers SHALL resolve via `placeholder_domain_layer_uid` before `inline_layer_uid`
+- **AND** `fetch_paged_rulebase()` SHALL manage accumulator resets and typed rule materialization through dedicated internal helpers
 
 
 ---
@@ -5256,6 +5518,21 @@ When an explicit `server_ip` hostname is resolved and pinned to a canonical trus
 - **WHEN** cleanup, keepalive maintenance, or read-only session acquisition runs
 - **THEN** `SessionCleaner` SHALL re-raise `ServerIdentityError`, `keepalive_sid()` SHALL return `False` on credential failure without evicting unrelated `auth_identity=None` caches, and `get_readonly_session()` SHALL resolve explicit hostnames once per call
 
+### Requirement: Pinned Session Cleanup, Recursive Overlay Redaction, and Accurate Script Stage Attribution
+
+**ID**: REQ-SESS-016\
+**Intent**: Close DNS-rebinding windows in startup/recovery session cleanup, strip nested secrets from session overlays, and report accurate operation names on script errors.\
+**Non-goals**: Changing Check Point session expiry thresholds or RBAC permissions.
+
+`SessionCleaner` MUST preserve DNS-pinned IP and `tls_identity_host` when calling `show-sessions` and `discard`. Session overlay tracking MUST recursively strip sensitive keys at every nesting depth, and `ScriptRepositoryService` MUST attribute `RepositoryScriptPermissionError.operation` to the exact failing stage.
+
+#### Scenario: SCN-SESS-016-1 — Pinned SessionCleaner TLS calls, recursive overlay stripping, and stage-accurate script errors
+
+- **GIVEN** a DNS hostname management server during `SessionCleaner` cleanup, a `WriteSession` command containing nested sensitive keys, or a `ScriptRepositoryService` login/mutation/publish permission failure
+- **WHEN** cleanup RPCs execute, overlay command history updates, or script repository methods raise `RepositoryScriptPermissionError`
+- **THEN** `SessionCleaner` SHALL pass the DNS-pinned IP and `tls_identity_host` to `show-sessions` and `discard`
+- **AND** `SessionOverlay` SHALL strip sensitive keys recursively and `ScriptRepositoryService` SHALL report the true failing phase in `operation`
+
 
 ---
 
@@ -5456,3 +5733,25 @@ The HTTPS transport SHALL pool fingerprint-verified keep-alive connections keyed
 
 - **WHEN** a server sends a response whose `Content-Length` header or streamed byte count exceeds `ArodonataSettings.max_response_bytes`
 - **THEN** `ApiTransport` SHALL abort reading at `max_response_bytes + 1` bytes, close the socket without pooling, raise `TransportError` with `phase="read"` (`request_sent=True`), and never automatically resend the request
+
+### Requirement: Atomic Multi-Key TOFU Binding and Cooldown-Safe Login Locking
+
+**ID**: REQ-TRANS-008\
+**Intent**: Eliminate TOFU trust-store poisoning, asymmetric hostname/IP binding gaps, premature read-SID eviction, and distributed login-lock TTL exhaustion under load.\
+**Non-goals**: Replacing SHA-256 fingerprint pinning or altering Check Point server-side throttle limits.
+
+TLS trust verification MUST bind both `(hostname, port)` and `(resolved_ip, port)` atomically before writing TOFU entries to disk. Read timeouts and non-failover connect errors MUST NOT evict healthy cached read-only SIDs, and login rate-limit cooldown waits MUST complete before acquiring the distributed login DB lock.
+
+#### Scenario: SCN-TRANS-008-1 — Atomic multi-key TOFU persistence and symmetric hostname pin binding
+
+- **GIVEN** a `tofu` or `lab-memory` trust store where `(resolved_ip, port)` is already pinned or two workers race on concurrent dual-key TOFU writes
+- **WHEN** a hostname connection verifies a matching or conflicting certificate fingerprint
+- **THEN** a matching fingerprint SHALL bind `(hostname, port)` symmetrically when `identity_host` is present and not yet recorded
+- **AND** conflicting multi-key writes SHALL check all target keys atomically under the trust-store lock so a rejected certificate is never persisted
+
+#### Scenario: SCN-TRANS-008-2 — Read-SID preservation on read timeout and pre-lock cooldown waiting
+
+- **GIVEN** a cached read-only SID experiencing an `ApiTimeoutError` or non-failover `TransportError`, or a queued login facing an active rate-limit cooldown
+- **WHEN** `api_call()` handles the read timeout/connect failure or `LoginGate` acquires a login slot
+- **THEN** healthy cached read-only SIDs SHALL remain cached without premature eviction or orphaned sessions
+- **AND** `LoginGate` SHALL wait out any active in-process cooldown before acquiring the distributed database lock

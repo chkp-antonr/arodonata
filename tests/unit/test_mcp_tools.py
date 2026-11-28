@@ -1173,7 +1173,7 @@ async def test_mcp_cpcrud_tamper_resistance_staged_sessions_and_api_call_hardeni
     - `cpcrud_inverse` requires an `ApplyReport` or applied `plan_id`.
     - `cpcrud_staged_session(action='publish'|'discard')` adopts and publishes/discards staged sessions.
     - `show_object` rejects non-canonical or traversal `obj_type` values.
-    - `api_call` with `ALLOW_WRITE_API=false` permits `where-used` and `verify-policy` and rejects `publish`/`logout`/traversal.
+    - `api_call` with `ALLOW_WRITE_API=false` permits `where-used` and `keepalive` and rejects `verify-policy`/`publish`/`logout`/traversal.
     - `api_call` with `ALLOW_WRITE_API=true` isolates mutating commands in dedicated sessions and caps `timeout <= 300.0`.
     """
     fake_api = MCPFakeApi()
@@ -2930,3 +2930,135 @@ async def test_mcp_wave11_list_domains_hint_multidomain_upgrade_asset_roles_and_
                 {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-peer-a", "action": "publish"},
             )
             assert pub_a.is_error is False
+
+
+@pytest.mark.spec("SCN-MCP-018-1")
+@pytest.mark.asyncio
+async def test_scn_mcp_018_1_change_report_session_uid_cap_quota_and_owned_sessions_strip() -> None:
+    """SCN-MCP-018-1: MCP change_report bounds unique session_uids <= 50, charges proportional quota, and strips owned_sessions."""
+    from arodonata.mcp.quota import MCPToolQuotaManager
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        quota_mgr = MCPToolQuotaManager(live_rate_limit_per_minute=10)
+        server = create_mcp_server(client, auth_mode="host", quota_manager=quota_mgr)
+        await client.get_domains("mds1")
+
+        # 1. > 50 unique session_uids is rejected with ToolFailure
+        too_many = await server.call_tool(
+            "change_report",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "session_uids": [f"s-{i}" for i in range(51)],
+            },
+        )
+        assert too_many.is_error is True
+        assert "at most 50 unique session_uids" in _get_tool_text(too_many)
+
+        # 2. Caller-injected owned_sessions in scopes is stripped + multi-session UID charges proportional quota
+        used_before = quota_mgr.live_bucket_count(client_id="anonymous")
+        res_ok = await server.call_tool(
+            "change_report",
+            {
+                "mgmt_name": "mds1",
+                "domain": "Corp",
+                "scopes": [
+                    {
+                        "mgmt_name": "mds1",
+                        "domain": "Corp",
+                        "session_uids": ["s-1", "s-2", "s-3"],
+                        "owned_sessions": {
+                            "s-1": {"sid": "INJECTED-OWNED-SID", "server_ip": "192.0.2.99", "session_uid": "s-1"}
+                        },
+                    }
+                ],
+                "format": "json",
+            },
+        )
+        assert res_ok.is_error is False
+        assert not any(
+            c_kw.get("sid") == "INJECTED-OWNED-SID" for *_a, c_kw in fake_api.calls if isinstance(c_kw, dict)
+        )
+        used_after = quota_mgr.live_bucket_count(client_id="anonymous")
+        assert used_after - used_before >= 3
+
+
+@pytest.mark.spec("SCN-MCP-018-2")
+@pytest.mark.asyncio
+async def test_scn_mcp_018_2_atomic_staged_batch_and_list_assets_live_filtering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCN-MCP-018-2: cpcrud_apply multi-domain staged batch rejects atomically on capacity, and list_assets(cache_mode='live') filters locally."""
+    import arodonata.mcp.tools.cpcrud as cpcrud_mod
+
+    fake_api = MCPFakeApi()
+    settings = ArodonataSettings(mgmt_name="mds1", mgmt_ip="10.0.0.1", api_key="secret")
+
+    async with ArodonataClient(settings, api=fake_api) as client:
+        server = create_mcp_server(client, auth_mode="host", cpcrud=True)
+        await client.get_domains("mds1")
+
+        # 1. Multi-domain staged batch with only 1 free slot (MAX_STORED_PLANS=2, 1 peer present)
+        #    MUST reject atomically and discard BOTH new batch sessions without self-evicting sibling!
+        monkeypatch.setattr(cpcrud_mod, "MAX_STORED_PLANS", 2)
+        tpl_single = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "domain": "Corp",
+            "objects": [{"type": "host", "name": "H_peer_slot", "ipv4-address": "10.8.8.1"}],
+        }
+        with user_context(user_id="PEER_EXISTING", client_id="PEER_EXISTING"):
+            p_peer = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_single}))
+            fake_api.staged_uid_sequence.append("sess-existing-peer")
+            r_peer = await server.call_tool(
+                "cpcrud_apply", {"plan_id": p_peer["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert r_peer.is_error is False
+
+        tpl_two_dom = {
+            "version": 1,
+            "mgmt_name": "mds1",
+            "operations": [
+                {"operation": "add", "domain": "Corp", "type": "host", "name": "H_d1", "ipv4-address": "10.8.8.2"},
+                {"operation": "add", "domain": "Global", "type": "host", "name": "H_d2", "ipv4-address": "10.8.8.3"},
+            ],
+        }
+        with user_context(user_id="BATCH_CALLER", client_id="BATCH_CALLER"):
+            p_batch = _parse_tool_json(await server.call_tool("cpcrud_plan", {"template": tpl_two_dom}))
+            fake_api.staged_uid_sequence.extend(["sess-batch-1", "sess-batch-2"])
+            discards_before = len([c for c in fake_api.calls if c[1] == "discard"])
+            r_batch = await server.call_tool(
+                "cpcrud_apply", {"plan_id": p_batch["plan_id"], "no_publish": True, "keep_session": True}
+            )
+            assert r_batch.is_error is True
+            assert "Staged session registry is full" in _get_tool_text(r_batch)
+            discards_after = len([c for c in fake_api.calls if c[1] == "discard"])
+            assert discards_after - discards_before >= 2
+
+        # Existing peer's sole staged session must still be publishable!
+        with user_context(user_id="PEER_EXISTING", client_id="PEER_EXISTING"):
+            r_pub = await server.call_tool(
+                "cpcrud_staged_session",
+                {"mgmt_name": "mds1", "domain": "Corp", "session_uid": "sess-existing-peer", "action": "publish"},
+            )
+            assert r_pub.is_error is False
+
+        # 2. list_assets(..., cache_mode="live") applies types, roles, platforms, and filter locally
+        live_filtered = _parse_tool_json(
+            await server.call_tool(
+                "list_assets",
+                {
+                    "mgmt_name": "mds1",
+                    "domain": "Corp",
+                    "types": ["gateway"],
+                    "roles": ["gateway"],
+                    "filter": "corp-gw",
+                    "cache_mode": "live",
+                },
+            )
+        )
+        assert live_filtered["source"] == "live"
+        assert [o["name"] for o in live_filtered["objects"]] == ["corp-gw-01"]

@@ -86,7 +86,7 @@ def _sync_member_refs_on_group_list(
             )
         m_obj, m_owner, _ = found
         m_uid = str(m_obj["uid"])
-        if spec.obj_type == "group" and m_uid == group_obj.get("uid"):
+        if spec.is_group and m_uid == group_obj.get("uid"):
             return cp_error("err_validation_failed", "Group cannot contain itself", status_code=400)
         if m_uid not in seen:
             seen.add(m_uid)
@@ -126,54 +126,43 @@ def _sync_object_groups_field(
     global_files: Mapping[str, Any],
     dom_name: str,
     target_group_spec: EntitySpec,
+    locked_uids_out: set[str] | None = None,
 ) -> ApiCallResult | None:
     """Apply `groups` list or `{add, remove}` onto local group objects."""
+    obj_uid = str(obj["uid"])
     cur_uids = [ref_uid(g) for g in obj.get("groups", []) if ref_uid(g)]
     if isinstance(groups_spec, Mapping) and ("add" in groups_spec or "remove" in groups_spec):
         to_remove: set[str] = set()
         for rem_ref in as_list(groups_spec.get("remove")):
             hit = find_in_scope(dom_files, ref_uid(rem_ref), preferred_spec=target_group_spec, include_extras=False)
-            if hit:
-                to_remove.add(str(hit[0]["uid"]))
-            else:
-                to_remove.add(ref_uid(rem_ref))
+            to_remove.add(str(hit[0]["uid"]) if hit else ref_uid(rem_ref))
         desired = [u for u in cur_uids if u not in to_remove]
-        for add_ref in as_list(groups_spec.get("add")):
-            eff_hit = find_effective_object(
-                dom_files, global_files, dom_name, ref_uid(add_ref), preferred_spec=target_group_spec
-            )
-            if eff_hit is None:
-                return cp_error(
-                    "generic_err_object_not_found",
-                    f"Group [{ref_uid(add_ref)}] not found",
-                    status_code=404,
-                )
-            g_obj, g_owner, _ = eff_hit
-            if is_global_owned(g_obj, g_owner, dom_name):
-                return global_read_only_error(ref_uid(add_ref), dom_name)
-            g_uid = str(g_obj["uid"])
-            if g_uid not in desired:
-                desired.append(g_uid)
+        refs_to_add = as_list(groups_spec.get("add"))
     else:
         desired = []
-        for g_ref in as_list(groups_spec):
-            eff_hit = find_effective_object(
-                dom_files, global_files, dom_name, ref_uid(g_ref), preferred_spec=target_group_spec
-            )
-            if eff_hit is None:
-                return cp_error(
-                    "generic_err_object_not_found",
-                    f"Group [{ref_uid(g_ref)}] not found",
-                    status_code=404,
-                )
-            g_obj, g_owner, _ = eff_hit
-            if is_global_owned(g_obj, g_owner, dom_name):
-                return global_read_only_error(ref_uid(g_ref), dom_name)
-            g_uid = str(g_obj["uid"])
-            if g_uid not in desired:
-                desired.append(g_uid)
+        refs_to_add = as_list(groups_spec)
 
-    obj_uid = str(obj["uid"])
+    for g_ref in refs_to_add:
+        eff_hit = find_effective_object(
+            dom_files, global_files, dom_name, ref_uid(g_ref), preferred_spec=target_group_spec
+        )
+        if eff_hit is None:
+            return cp_error("generic_err_object_not_found", f"Group [{ref_uid(g_ref)}] not found", status_code=404)
+        g_obj, g_owner, found_spec = eff_hit
+        if is_global_owned(g_obj, g_owner, dom_name):
+            return global_read_only_error(ref_uid(g_ref), dom_name)
+        if found_spec != target_group_spec:
+            return cp_error(
+                "err_validation_failed",
+                f"Object [{ref_uid(g_ref)}] is not a {target_group_spec.obj_type}",
+                status_code=400,
+            )
+        g_uid = str(g_obj["uid"])
+        if g_uid == obj_uid:
+            return cp_error("err_validation_failed", "Group cannot contain itself", status_code=400)
+        if g_uid not in desired:
+            desired.append(g_uid)
+
     new_groups_list: list[dict[str, Any]] = []
     for g_obj in ensure_entity_bucket(dom_files, target_group_spec):
         g_uid = str(g_obj.get("uid") or "")
@@ -182,11 +171,15 @@ def _sync_object_groups_field(
             if all(ref_uid(m) != obj_uid for m in members):
                 members.append(make_object_summary(obj, default_domain=dom_name))
                 g_obj["members"] = members
+                if locked_uids_out is not None:
+                    locked_uids_out.add(g_uid)
             new_groups_list.append(make_object_summary(g_obj, default_domain=dom_name))
         else:
             filtered_m = [m for m in members if ref_uid(m) != obj_uid]
             if len(filtered_m) != len(members):
                 g_obj["members"] = filtered_m
+                if locked_uids_out is not None:
+                    locked_uids_out.add(g_uid)
     obj["groups"] = new_groups_list
     return None
 
@@ -264,6 +257,7 @@ def _apply_entity_fields(
     dom_files: dict[str, Any],
     global_files: Mapping[str, Any],
     dom_name: str,
+    locked_uids_out: set[str] | None = None,
 ) -> ApiCallResult | None:
     ignored = {
         "uid",
@@ -375,6 +369,7 @@ def _apply_entity_fields(
             global_files=global_files,
             dom_name=dom_name,
             target_group_spec=grp_spec,
+            locked_uids_out=locked_uids_out,
         )
         if err is not None:
             return err
@@ -501,6 +496,7 @@ def handle_entity_crud(
             dom_files=dom_files,
             global_files=global_files,
             dom_name=dom_name,
+            locked_uids_out=locked_uids_out,
         )
         if err is not None:
             if add_snapshots is not None:
@@ -572,6 +568,7 @@ def handle_entity_crud(
             dom_files=dom_files,
             global_files=global_files,
             dom_name=dom_name,
+            locked_uids_out=locked_uids_out,
         )
         if err is not None:
             if set_snapshots is not None:

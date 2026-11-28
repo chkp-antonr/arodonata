@@ -237,14 +237,6 @@ Apply `trace_modules` rules if non-empty; preserve host rules when empty.
 
 Compute socket read timeout for an API call (`budget + 5` or `max(api, login) + 5`).
 
-###### `def model_dump(self, **kwargs: Any) -> dict[str, Any]`
-
-Serialize settings with secrets and database URL passwords masked.
-
-###### `def model_dump_json(self, **kwargs: Any) -> str`
-
-Serialize settings to JSON with secrets and database URL passwords masked.
-
 ### `arodonata/core/context.py`
 
 Contextvars propagation for authentication, operator metadata, and WriteSession overlays.
@@ -490,6 +482,10 @@ Return True if a Check Point API code or message indicates script or read-only p
 ##### `def is_unsupported_script_command_error(error_code: str | None, error_message: str | None) -> bool`
 
 Return True if a Check Point API error indicates Script Repository commands are unsupported (< v1.9).
+
+##### `def is_not_found_error(status_code: int, error_code: str | None, error_message: str | None) -> bool`
+
+Return `True` if a Check Point API response specifically indicates 'object not found'.
 
 #### class `ArodonataError(Exception)`
 
@@ -979,6 +975,13 @@ Expand asset types/aliases into deduplicated REST and Check Point `Cpmi*` classe
 
 Normalize an object, service, or asset type alias across all scopes.
 
+##### `def partition_entity_types(types: Sequence[str] | None, *, expand_gateway_family: bool = False, group_as_service: bool = False) -> PartitionedEntityTypes`
+
+Partition raw `types` filters into deduplicated `(object_types, service_types, asset_types, is_explicit_empty)`.
+
+When `types` is `None`, returns empty lists and `is_explicit_empty=False`.
+When `types` is non-`None` but contains no non-blank entries, returns `is_explicit_empty=True`.
+
 ##### `def utc_now() -> datetime`
 
 Return current naive UTC datetime (tzinfo=None).
@@ -1008,6 +1011,18 @@ naive datetimes are assumed to already be in UTC and returned as-is.
 
 Parse Check Point `publish-time` or `last-modify-time` dict/string/int into a naive UTC `datetime`.
 
+#### class `PartitionedEntityTypes(NamedTuple)`
+
+Result of partitioning raw entity type filters into object, service, and asset scopes.
+
+##### Fields / Class Variables
+
+```python
+object_types: list[str]
+service_types: list[str]
+asset_types: list[str]
+is_explicit_empty: bool
+```
 #### class `ApiCallResult(BaseModel)`
 
 Typed result of a single Check Point Management API call.
@@ -2481,6 +2496,14 @@ Return `(min_ip_int, max_ip_int)` for a `host`, `network`, or `address-range` `C
 
 Parse a CIDR (`10.0.0.0/24`), single IPv4 (`10.0.0.1`), or range (`10.0.0.1-10.0.0.10`) into `(lo, hi, prefix_len)`.
 
+##### `def escape_markdown_cell(val: Any) -> str`
+
+Escape HTML tags, newlines, backslashes, pipes, and Markdown link/code delimiters in table cells.
+
+##### `def escape_markdown_code(val: Any) -> str`
+
+Neutralize newlines, backticks, and GFM table pipes inside inline Markdown code spans without mangling paths.
+
 ### `arodonata/core/services/__init__.py`
 
 Core domain services for Arodonata v2 (`DomainService`, `DomainSyncCoordinator`,
@@ -2678,9 +2701,19 @@ _No docstring._
 ```
 Configured domain list TTL in seconds (default 3600s / 1 hour).
 
-###### `def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None) -> datetime`
+###### `def invalidation_seq(self) -> int`
+
+```python
+@property
+```
+Current monotonic invalidation sequence counter.
+
+###### `def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None, *, target_seq: int | None = None) -> datetime`
 
 Record that `mgmt_name`'s domain list was refreshed at `refreshed_at`.
+
+When `target_seq` is provided and an invalidation occurred after `target_seq`
+(either globally or for `mgmt_name`), the mid-flight invalidation is preserved.
 
 ###### `def invalidate(self, mgmt_name: str | None = None) -> None`
 
@@ -3021,6 +3054,10 @@ Return `True` if `obj` matches `term`.
 ##### `def resolve_group_memberships(matches: Sequence[CPObject], all_objects: Sequence[CPObject], *, max_depth: int) -> dict[str, list[GroupMembershipNode]]`
 
 Build reverse member-to-group index per `(mgmt_name, domain_name)` and traverse BFS up to `max_depth`.
+
+##### `def asset_matches_classified_term(asset: Asset, term: ClassifiedSearchTerm, *, exact_match: bool = False) -> bool`
+
+Return `True` if `asset`'s primary attributes or interface IPv4 addresses match `term`.
 
 ##### `async def search_objects_impl(svc: Any, query: str, *, classified_terms: list[ClassifiedSearchTerm], mgmt_name: str | None = None, domains: Sequence[str] | str | None = None, types: Sequence[str] | None = None, include_global: bool = False, max_depth: int = 2, exact_match: bool = False, cache_mode: CacheMode = 'smart', cache_ttl: float | None = None) -> SearchResult`
 
@@ -3366,11 +3403,11 @@ Extract and Base64-decode `responseMessage` / `responseError` from Check Point `
 
 ##### `def parse_ip_route_show(output: str) -> list[ParsedCliRoute]`
 
-Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items.
+Parse Linux/Gaia `ip -4 route show` output into `ParsedCliRoute` items (including multi-line ECMP).
 
 ##### `def parse_clish_show_route(output: str) -> list[ParsedCliRoute]`
 
-Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items.
+Parse Gaia `clish -c "show route"` output into `ParsedCliRoute` items (including ECMP continuations).
 
 ##### `def parse_combined_cli_routes_with_status(stdout: str, *, max_routes: int | None = None) -> tuple[list[ParsedCliRoute], bool]`
 
@@ -4575,6 +4612,14 @@ Return `True` if `fingerprint` is already trusted for any address in the store.
 
 Record a trusted fingerprint for `(host, port)` and atomically persist with mode `0600`.
 
+###### `def record_many(self, targets: Sequence[tuple[str, int]], fingerprint: str, *, source: str = 'tofu', persist: bool = True) -> dict[str, KnownHostEntry]`
+
+Record a trusted fingerprint for multiple `(host, port)` targets atomically.
+
+Checks all target keys against on-disk entries inside a single `flock` critical section
+before writing or replacing `tls_known_hosts.json` so a conflict on any target never
+persists a partial write for sibling targets.
+
 #### class `TrustPolicy`
 
 Enforces Check Point server TLS certificate fingerprint verification (`pinned`, `tofu`, `lab-memory`).
@@ -4978,6 +5023,17 @@ Atomically replace all cached assets for `(mgmt_name, domain_name)`.
 @traced
 ```
 Insert or update `Asset` rows in `arodonata_assets`.
+
+###### `async def update_assets_vsx_links(self, patches: Sequence[tuple[str, datetime, Mapping[str, Any]]]) -> int`
+
+```python
+@traced
+```
+Conditionally update VSX-linking columns on existing `arodonata_assets` rows.
+
+Each patch is `(row_id, expected_updated_at, column_values)`. Only existing rows whose
+`updated_at` matches `expected_updated_at` are updated, preventing concurrent per-domain
+asset refreshes from being clobbered or deleted assets from being resurrected.
 
 ### `arodonata/adapters/storage/cache/mappers.py`
 
@@ -6033,9 +6089,6 @@ Convert a raw Check Point Threat Prevention rule dict into `ThreatRuleEntry`.
 
 ##### `async def fetch_paged_rulebase(api: ApiPort, mgmt_name: str, domain_name: str | None, *, rulebase_type: RulebaseType, layer_uid: str = '', layer_name: str = '', package_uid: str | None = None, package_name: str | None = None, details_level: str = 'standard', use_object_dictionary: bool = True, limit: int = MAX_RULEBASE_PAGE_LIMIT, extra_payload: dict[str, Any] | None = None, sid: str | None = None, server_ip: str | None = None, max_pages: int = MAX_RULEBASE_PAGES, max_objects: int = MAX_RULEBASE_OBJECTS) -> PagedRulebaseResult`
 
-```python
-@traced
-```
 Page `show-*-rulebase` in chunks of up to 100 rules, stitching split sections and preserving empty trailing sections.
 
 ##### `async def list_collection_with_fallback(api: ApiPort, mgmt_name: str, domain_name: str, command: str, *, data_keys: tuple[str, ...], sid: str | None = None, server_ip: str | None = None, strict: bool = True) -> list[dict[str, Any]]`
@@ -6295,9 +6348,9 @@ Constant tables and normalization helpers shared across CPCRUD state readers.
 
 Return canonical comparison key for an `application-site` URL entry (case-folded when `is_regex=False`).
 
-##### `def is_not_found_error(status_code: int, error_code: str | None, error_message: str | None) -> bool`
+##### `def match_deleted_entity_overlay(*, uid: str | None, name: str | None, entity_type: str | None, virt_objects: Mapping[str, Any], virt_services: Mapping[str, Any], del_objects: set[str], del_services: set[str], rule_buckets: Sequence[tuple[set[str], Mapping[str, Any]]]) -> bool`
 
-Return `True` if a Check Point API response specifically indicates 'object not found'.
+Return `True` when `(uid, name, entity_type)` resolves as virtually deleted in overlay state.
 
 #### class `StateLookupError(ArodonataError)`
 
@@ -7529,14 +7582,6 @@ Enforce unified fail-closed MCP security invariants across CLI, server, and ASGI
 ###### `def validate_standalone_startup(self, core_settings: ArodonataSettings | None = None, *, environ: dict[str, str] | None = None, emit_warning: bool = True) -> TrustPolicy`
 
 Validate standalone CLI (`arodonata-mcp`) security policy and TLS trust store configuration.
-
-###### `def model_dump(self, **kwargs: Any) -> dict[str, Any]`
-
-Serialize MCP settings with `tokens` masked.
-
-###### `def model_dump_json(self, **kwargs: Any) -> str`
-
-Serialize MCP settings to JSON with `tokens` masked.
 
 ### `arodonata/mcp/errors.py`
 
@@ -9621,9 +9666,9 @@ Reject mutations targeting UIDs locked by another open or disconnected session.
 
 Handle `show-global-assignments`, `show-global-assignment`, and `assign-global-*` commands.
 
-##### `def handle_verify_or_install_policy(mock: FileReplayApiMock, clean_cmd: str, req: Mapping[str, Any], *, dom_name: str, dom_files: Mapping[str, Any], global_files: Mapping[str, Any], wait_for_task: bool) -> ApiCallResult`
+##### `def handle_verify_or_install_policy(mock: FileReplayApiMock, clean_cmd: str, req: Mapping[str, Any], *, dom_name: str, dom_files: Mapping[str, Any], global_files: Mapping[str, Any], wait_for_task: bool, binding: SidBinding | None = None, active_ws: WorkSession | None = None) -> ApiCallResult`
 
-Handle `verify-policy` and `install-policy` async task synthesis.
+Handle `verify-policy` and `install-policy` session/domain guards and async task synthesis.
 
 ### `arodonata/testing/_replay_queries.py`
 
@@ -9994,6 +10039,20 @@ Path to the backing `enterprise_raw_dataset` fixture directory.
 @property
 ```
 Associated `FileReplayCliMock` instance.
+
+###### `def manage_repository_scripts(self) -> str`
+
+```python
+@property
+```
+Repository script RBAC mode (`'write'`, `'read'`, or `'none'`).
+
+###### `def manage_repository_scripts(self, value: str) -> None`
+
+```python
+@manage_repository_scripts.setter
+```
+_No docstring._
 
 ###### `def manifest(self) -> dict[str, Any]`
 

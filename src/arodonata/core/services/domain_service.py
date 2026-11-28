@@ -24,6 +24,7 @@ from arodonata.core.errors import (
     ConfigurationError,
     DomainNotFoundError,
     LockAcquisitionError,
+    redact_sid,
 )
 from arodonata.core.models.common import ApiCallResult, CacheMode, to_naive_utc, utc_now
 from arodonata.core.models.domains import (
@@ -72,9 +73,29 @@ class DomainListRefreshTracker:
         """Configured domain list TTL in seconds (default 3600s / 1 hour)."""
         return self._ttl_seconds
 
-    def mark_refreshed(self, mgmt_name: str, refreshed_at: datetime | None = None) -> datetime:
-        """Record that `mgmt_name`'s domain list was refreshed at `refreshed_at`."""
+    @property
+    def invalidation_seq(self) -> int:
+        """Current monotonic invalidation sequence counter."""
+        return self._invalidation_counter
+
+    def mark_refreshed(
+        self,
+        mgmt_name: str,
+        refreshed_at: datetime | None = None,
+        *,
+        target_seq: int | None = None,
+    ) -> datetime:
+        """Record that `mgmt_name`'s domain list was refreshed at `refreshed_at`.
+
+        When `target_seq` is provided and an invalidation occurred after `target_seq`
+        (either globally or for `mgmt_name`), the mid-flight invalidation is preserved.
+        """
         ts = to_naive_utc(refreshed_at) if refreshed_at is not None else self._now()
+        if target_seq is not None:
+            latest_inv_seq = max(self._global_invalidated_seq, self._server_invalidated_seq.get(mgmt_name, 0))
+            if latest_inv_seq > target_seq:
+                self._last_refreshed_at.pop(mgmt_name, None)
+                return ts
         self._last_refreshed_at[mgmt_name] = ts
         self._invalidated_servers.discard(mgmt_name)
         self._server_refreshed_seq[mgmt_name] = self._invalidation_counter
@@ -133,9 +154,7 @@ class DomainListRefreshTracker:
             inv_candidates.append((srv_inv, self._server_invalidated_seq.get(mgmt_name, 0)))
         if inv_candidates:
             max_inv_ts, max_inv_seq = max(inv_candidates, key=lambda pair: (pair[0], pair[1]))
-            if ref_time < max_inv_ts:
-                return True
-            if ref_time == max_inv_ts and self._server_refreshed_seq.get(mgmt_name, 0) < max_inv_seq:
+            if ref_time < max_inv_ts or self._server_refreshed_seq.get(mgmt_name, 0) < max_inv_seq:
                 return True
 
         age = (self._now() - ref_time).total_seconds()
@@ -321,6 +340,7 @@ class DomainService:
         endpoint = servers.get(mgmt_name)
         default_host = endpoint.host if endpoint is not None else None
         now = self._now()
+        pre_discovery_seq = self._tracker.invalidation_seq
         logger.debug(
             f"Discovering domains on '{mgmt_name}' ({default_host or mgmt_name})...",
             mgmt_name=mgmt_name,
@@ -352,9 +372,9 @@ class DomainService:
         # If show-domains succeeded with no objects, or failed because server is single-domain SmartCenter,
         # synthesize the default single-domain entry if no user domains were returned.
         if not discovered and not res.success and not is_single_domain:
-            err_summary = res.error_message or f"HTTP {res.status_code}"
+            err_summary = redact_sid(res.error_message or f"HTTP {res.status_code}")
             if fallback_failed_res is not None:
-                fb_summary = fallback_failed_res.error_message or f"HTTP {fallback_failed_res.status_code}"
+                fb_summary = redact_sid(fallback_failed_res.error_message or f"HTTP {fallback_failed_res.status_code}")
                 err_summary = (
                     f"{err_summary} (standard fallback failed: "
                     f"{fallback_failed_res.error_code or fallback_failed_res.status_code} - {fb_summary})"
@@ -413,7 +433,7 @@ class DomainService:
             discovered.append(global_dom)
 
         await self._cache.upsert_domains(discovered)
-        refreshed_at = self._tracker.mark_refreshed(mgmt_name, now)
+        refreshed_at = self._tracker.mark_refreshed(mgmt_name, now, target_seq=pre_discovery_seq)
         await self._cache.upsert_sync_state(
             DomainSyncState(
                 mgmt_name=mgmt_name,

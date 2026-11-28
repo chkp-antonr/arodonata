@@ -1262,3 +1262,71 @@ async def test_executor_concurrent_apply_publish_and_owner_fair_staged_registry_
     assert ("mds1", "Corp", "suid-g-0") not in registry
     assert "sid-g-0" in discarded_sids
     assert "sid-g-0" in logged_out_sids
+
+
+@pytest.mark.spec("SCN-CPCRUD-019-2")
+@pytest.mark.asyncio
+async def test_scn_cpcrud_019_2_user_context_owner_isolation_and_single_peer_capacity_rejection() -> None:
+    """SCN-CPCRUD-019-2: Executor staged registry isolates UserContext callers and rejects 257th single-peer session instead of evicting peers."""
+    from collections import OrderedDict
+
+    from arodonata.core.context import AuthContext, UserContext, WriteSession
+    from arodonata.core.errors import CacheError
+    from arodonata.cpcrud._executor_helpers import StagedSessionInfo
+    from arodonata.cpcrud._executor_pass import _register_staged_session, _resolve_executor_owner_key
+
+    assert _resolve_executor_owner_key(None, UserContext(client_id="TEAM_A", user_id="TEAM_A")) == "TEAM_A"
+    assert _resolve_executor_owner_key(None, UserContext(client_id="TEAM_B", user_id="u2")) == "TEAM_B:u2"
+    assert _resolve_executor_owner_key(AuthContext(api_key="k1"), UserContext(client_id="TEAM_A", user_id="u1")) != (
+        _resolve_executor_owner_key(AuthContext(api_key="k1"), UserContext(client_id="TEAM_B", user_id="u2"))
+    )
+
+    discarded: list[str] = []
+    logged_out: list[str] = []
+
+    class _PeerCapApi:
+        async def api_call(self, _m: str, cmd: str, _p: dict[str, Any] | None = None, **kw: Any) -> ApiCallResult:
+            if cmd == "discard" and kw.get("sid"):
+                discarded.append(str(kw["sid"]))
+            return ApiCallResult(success=True, data={})
+
+        async def logout_sid(self, _m: str, sid: str, **_kw: Any) -> None:
+            logged_out.append(sid)
+
+    registry: OrderedDict[tuple[str, str, str], StagedSessionInfo] = OrderedDict()
+    for i in range(256):
+        registry[("mds1", "Corp", f"suid-peer-{i}")] = StagedSessionInfo(
+            mgmt_name="mds1",
+            domain_name="Corp",
+            sid=f"sid-peer-{i}",
+            server_ip="10.0.0.1",
+            session_uid=f"suid-peer-{i}",
+            owner_key=f"peer-{i}",
+        )
+
+    ws_overflow = WriteSession(
+        mgmt_name="mds1",
+        domain_name="Corp",
+        sid="sid-257",
+        server_ip="10.0.0.1",
+        session_uid="suid-257",
+    )
+    staged_out: list[StagedSessionInfo] = []
+    with pytest.raises(CacheError, match="256 distinct single-session callers"):
+        await _register_staged_session(
+            _PeerCapApi(),  # type: ignore[arg-type]
+            "mds1",
+            "Corp",
+            "Corp",
+            ws_overflow,
+            "sess-257",
+            staged_out,
+            registry,
+            stamp=None,
+            owner_key="peer-257",
+        )
+    assert len(registry) == 256
+    assert ("mds1", "Corp", "suid-peer-0") in registry
+    assert "sid-peer-0" not in discarded
+    assert "sid-257" in discarded
+    assert "sid-257" in logged_out

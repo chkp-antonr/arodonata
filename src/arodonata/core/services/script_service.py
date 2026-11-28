@@ -181,6 +181,38 @@ def _scrub_and_map_session_exception(
     return exc, False
 
 
+@asynccontextmanager
+async def _map_script_session_errors(
+    *,
+    mgmt_name: str,
+    dom_key: str,
+    ref: str,
+    operation: str | Callable[[], str],
+    known_sids: Callable[[], Sequence[str] | None] | Sequence[str] | None = None,
+) -> AsyncIterator[None]:
+    """Scrub bare SIDs and map session/auth permission errors to `RepositoryScriptPermissionError`."""
+    try:
+        yield
+    except ServerIdentityError:
+        raise
+    except Exception as exc:
+        eff_op = operation() if callable(operation) else operation
+        eff_sids = known_sids() if callable(known_sids) else known_sids
+        mapped, suppress_cause = _scrub_and_map_session_exception(
+            exc,
+            mgmt_name=mgmt_name,
+            dom_key=dom_key,
+            ref=ref,
+            operation=eff_op,
+            known_sids=eff_sids,
+        )
+        if suppress_cause:
+            raise mapped from None
+        if mapped is exc:
+            raise
+        raise mapped from exc
+
+
 def _metadata_matches(
     existing: RepositoryScript,
     *,
@@ -220,7 +252,13 @@ async def _invoke_run_script_with_session(
     async def _call_run_script(eff_sid: str | None, eff_ip: str | None) -> ApiCallResult:
         if eff_sid and eff_sid not in used_sids:
             used_sids.append(eff_sid)
-        try:
+        async with _map_script_session_errors(
+            mgmt_name=mgmt_name,
+            dom_key=dom_key,
+            ref=ref,
+            operation="run-script",
+            known_sids=lambda: used_sids or None,
+        ):
             return await api.api_call(
                 mgmt_name,
                 "run-script",
@@ -231,25 +269,15 @@ async def _invoke_run_script_with_session(
                 wait_for_task=True,
                 timeout=timeout,
             )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            mapped, suppress_cause = _scrub_and_map_session_exception(
-                exc,
-                mgmt_name=mgmt_name,
-                dom_key=dom_key,
-                ref=ref,
-                operation="run-script",
-                known_sids=used_sids or None,
-            )
-            if suppress_cause:
-                raise mapped from None
-            if mapped is exc:
-                raise
-            raise mapped from exc
 
     async def _acquire_session() -> tuple[str, str]:
-        try:
+        async with _map_script_session_errors(
+            mgmt_name=mgmt_name,
+            dom_key=dom_key,
+            ref=ref,
+            operation="login",
+            known_sids=lambda: used_sids or None,
+        ):
             if session_getter is not None:
                 return await session_getter(mgmt_name, dom_key)
             return await api.create_dedicated_session(
@@ -257,16 +285,6 @@ async def _invoke_run_script_with_session(
                 domain=dom_key,
                 session_name="arodonata-run-repo-script",
             )
-        except (SessionError, SessionStateError, AuthenticationError) as exc:
-            if is_script_permission_error(None, str(exc)):
-                raise RepositoryScriptPermissionError(
-                    mgmt_name,
-                    dom_key,
-                    ref,
-                    operation="run-script",
-                    message=str(exc),
-                ) from exc
-            raise
 
     if sid is not None:
         res = await _call_run_script(sid, server_ip)
@@ -562,7 +580,13 @@ class ScriptRepositoryService:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         known_sids = [active_ws.sid] if active_ws and active_ws.sid else None
-        try:
+        async with _map_script_session_errors(
+            mgmt_name=mgmt_name,
+            dom_key=dom_key,
+            ref=ref,
+            operation="show-repository-script",
+            known_sids=known_sids,
+        ):
             res = await self._api.api_call(
                 mgmt_name,
                 "show-repository-script",
@@ -570,22 +594,6 @@ class ScriptRepositoryService:
                 domain=dom_key,
                 wait_for_task=True,
             )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            mapped, suppress_cause = _scrub_and_map_session_exception(
-                exc,
-                mgmt_name=mgmt_name,
-                dom_key=dom_key,
-                ref=ref,
-                operation="show-repository-script",
-                known_sids=known_sids,
-            )
-            if suppress_cause:
-                raise mapped from None
-            if mapped is exc:
-                raise
-            raise mapped from exc
         if not res.success:
             raise _classify_api_error(
                 mgmt_name,
@@ -612,7 +620,13 @@ class ScriptRepositoryService:
 
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         known_sids = [active_ws.sid] if active_ws and active_ws.sid else None
-        try:
+        async with _map_script_session_errors(
+            mgmt_name=mgmt_name,
+            dom_key=dom_key,
+            ref="*",
+            operation="show-repository-scripts",
+            known_sids=known_sids,
+        ):
             query_res = await self._api.api_query(
                 mgmt_name,
                 "show-repository-scripts",
@@ -620,22 +634,6 @@ class ScriptRepositoryService:
                 details_level=details_level,
                 limit=limit,
             )
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            mapped, suppress_cause = _scrub_and_map_session_exception(
-                exc,
-                mgmt_name=mgmt_name,
-                dom_key=dom_key,
-                ref="*",
-                operation="show-repository-scripts",
-                known_sids=known_sids,
-            )
-            if suppress_cause:
-                raise mapped from None
-            if mapped is exc:
-                raise
-            raise mapped from exc
         if not query_res.success:
             err_res = ApiCallResult(
                 success=False,
@@ -808,10 +806,13 @@ class ScriptRepositoryService:
 
         async def _apply_in_session(
             session_sids: list[str] | None = None,
+            on_phase: Callable[[str], None] | None = None,
         ) -> tuple[RepositoryScriptEnsureAction, RepositoryScript]:
             curr_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
             eff_known = session_sids or ([curr_ws.sid] if curr_ws and curr_ws.sid else None)
             if status.exists:
+                if on_phase is not None:
+                    on_phase("set-repository-script")
                 set_payload: dict[str, Any] = {
                     "script-body": script_body,
                     **extra_fields,
@@ -843,6 +844,8 @@ class ScriptRepositoryService:
                     fallback_body=script_body,
                 )
 
+            if on_phase is not None:
+                on_phase("add-repository-script")
             add_payload: dict[str, Any] = {
                 "name": clean_name,
                 "script-body": script_body,
@@ -858,6 +861,8 @@ class ScriptRepositoryService:
             if not res.success:
                 err_msg = (res.error_message or "").lower()
                 if "already exists" in err_msg or "more than one object named" in err_msg:
+                    if on_phase is not None:
+                        on_phase("set-repository-script")
                     set_res = await self._api.api_call(
                         mgmt_name,
                         "set-repository-script",
@@ -898,24 +903,20 @@ class ScriptRepositoryService:
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         if active_ws is not None:
             active_sids = [active_ws.sid] if active_ws.sid else None
-            try:
-                action, script_obj = await _apply_in_session(active_sids)
-            except ServerIdentityError:
-                raise
-            except Exception as exc:
-                mapped, suppress_cause = _scrub_and_map_session_exception(
-                    exc,
-                    mgmt_name=mgmt_name,
-                    dom_key=dom_key,
-                    ref=clean_name,
-                    operation="ensure-repository-script",
-                    known_sids=active_sids,
-                )
-                if suppress_cause:
-                    raise mapped from None
-                if mapped is exc:
-                    raise
-                raise mapped from exc
+            active_phase = "set-repository-script" if status.exists else "add-repository-script"
+
+            def _set_active_phase(p: str) -> None:
+                nonlocal active_phase
+                active_phase = p
+
+            async with _map_script_session_errors(
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=clean_name,
+                operation=lambda: active_phase,
+                known_sids=active_sids,
+            ):
+                action, script_obj = await _apply_in_session(active_sids, on_phase=_set_active_phase)
             return EnsureRepositoryScriptResult(
                 mgmt_name=mgmt_name,
                 domain_name=dom_key,
@@ -925,32 +926,31 @@ class ScriptRepositoryService:
             )
 
         ws_sids: list[str] = []
-        try:
-            async with self._open_write_session(
+        phase = "login"
+
+        def _set_phase(p: str) -> None:
+            nonlocal phase
+            phase = p
+
+        async with (
+            _map_script_session_errors(
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=clean_name,
+                operation=lambda: phase,
+                known_sids=lambda: ws_sids or None,
+            ),
+            self._open_write_session(
                 mgmt_name,
                 dom_key,
                 session_name=f"arodonata-ensure-script-{clean_name}",
                 publish_on_exit=True,
-            ) as opened_ws:
-                if opened_ws.sid:
-                    ws_sids.append(opened_ws.sid)
-                action, script_obj = await _apply_in_session(ws_sids)
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            mapped, suppress_cause = _scrub_and_map_session_exception(
-                exc,
-                mgmt_name=mgmt_name,
-                dom_key=dom_key,
-                ref=clean_name,
-                operation="publish",
-                known_sids=ws_sids or None,
-            )
-            if suppress_cause:
-                raise mapped from None
-            if mapped is exc:
-                raise
-            raise mapped from exc
+            ) as opened_ws,
+        ):
+            if opened_ws.sid:
+                ws_sids.append(opened_ws.sid)
+            action, script_obj = await _apply_in_session(ws_sids, on_phase=_set_phase)
+            phase = "publish"
 
         return EnsureRepositoryScriptResult(
             mgmt_name=mgmt_name,
@@ -1001,52 +1001,38 @@ class ScriptRepositoryService:
         active_ws = get_write_session(mgmt_name=mgmt_name, domain_name=dom_key)
         if active_ws is not None:
             active_sids = [active_ws.sid] if active_ws.sid else None
-            try:
-                return await _delete_in_session(active_sids)
-            except ServerIdentityError:
-                raise
-            except Exception as exc:
-                mapped, suppress_cause = _scrub_and_map_session_exception(
-                    exc,
-                    mgmt_name=mgmt_name,
-                    dom_key=dom_key,
-                    ref=ref,
-                    operation="delete-repository-script",
-                    known_sids=active_sids,
-                )
-                if suppress_cause:
-                    raise mapped from None
-                if mapped is exc:
-                    raise
-                raise mapped from exc
-
-        ws_sids: list[str] = []
-        try:
-            async with self._open_write_session(
-                mgmt_name,
-                dom_key,
-                session_name=f"arodonata-delete-script-{ref}",
-                publish_on_exit=True,
-            ) as opened_ws:
-                if opened_ws.sid:
-                    ws_sids.append(opened_ws.sid)
-                return await _delete_in_session(ws_sids)
-        except ServerIdentityError:
-            raise
-        except Exception as exc:
-            mapped, suppress_cause = _scrub_and_map_session_exception(
-                exc,
+            async with _map_script_session_errors(
                 mgmt_name=mgmt_name,
                 dom_key=dom_key,
                 ref=ref,
                 operation="delete-repository-script",
-                known_sids=ws_sids or None,
-            )
-            if suppress_cause:
-                raise mapped from None
-            if mapped is exc:
-                raise
-            raise mapped from exc
+                known_sids=active_sids,
+            ):
+                return await _delete_in_session(active_sids)
+
+        ws_sids: list[str] = []
+        phase = "login"
+        async with (
+            _map_script_session_errors(
+                mgmt_name=mgmt_name,
+                dom_key=dom_key,
+                ref=ref,
+                operation=lambda: phase,
+                known_sids=lambda: ws_sids or None,
+            ),
+            self._open_write_session(
+                mgmt_name,
+                dom_key,
+                session_name=f"arodonata-delete-script-{ref}",
+                publish_on_exit=True,
+            ) as opened_ws,
+        ):
+            if opened_ws.sid:
+                ws_sids.append(opened_ws.sid)
+            phase = "delete-repository-script"
+            deleted = await _delete_in_session(ws_sids)
+            phase = "publish"
+            return deleted
 
     @traced
     async def run_repository_script(

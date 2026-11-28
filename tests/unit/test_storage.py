@@ -1280,3 +1280,56 @@ async def test_sqlite_rejects_symlinks_and_tightens_preexisting_file_permissions
     dir_path.mkdir()
     with pytest.raises(CacheError, match="regular file"):
         DatabaseManager(engine=f"sqlite+aiosqlite:///{dir_path}")
+
+
+@pytest.mark.spec("SCN-CACHE-021-1")
+async def test_external_sqlite_engine_and_file_exists_toctou_hardening(tmp_path: Path) -> None:
+    """SCN-CACHE-021-1: External file-backed SQLite AsyncEngine and FileExistsError race enforce symlink & 0o600 checks."""
+    import os
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from arodonata.core.errors import CacheError
+
+    if os.name == "nt":  # pragma: no cover
+        pytest.skip("POSIX permissions and symlinks required")
+
+    # 1. External AsyncEngine on pre-existing 0644 file tightens to 0o600 during initialize()
+    ext_file = tmp_path / "external_0644.db"
+    ext_file.write_bytes(b"")
+    os.chmod(ext_file, 0o644)
+    ext_engine = create_async_engine(f"sqlite+aiosqlite:///{ext_file}")
+    db_ext = DatabaseManager(engine=ext_engine)
+    try:
+        await db_ext.initialize()
+        assert (os.stat(ext_file).st_mode & 0o777) == 0o600
+    finally:
+        await db_ext.close()
+        await ext_engine.dispose()
+
+    # 2. External AsyncEngine pointing at symlink fails closed inside initialize()
+    real_target = tmp_path / "real_ext.db"
+    real_target.write_bytes(b"safe")
+    sym_ext = tmp_path / "sym_ext.db"
+    sym_ext.symlink_to(real_target)
+    sym_engine = create_async_engine(f"sqlite+aiosqlite:///{sym_ext}")
+    db_sym = DatabaseManager(engine=sym_engine)
+    try:
+        with pytest.raises(CacheError, match="symlink"):
+            await db_sym.initialize()
+        assert real_target.read_bytes() == b"safe"
+    finally:
+        await db_sym.close()
+        await sym_engine.dispose()
+
+    # 3. Direct helper rejects symlinks and tightens 0644 files (used in FileExistsError race branch)
+    from arodonata.adapters.storage.database import _validate_and_harden_sqlite_file
+
+    raced_file = tmp_path / "raced.db"
+    raced_file.write_bytes(b"")
+    os.chmod(raced_file, 0o644)
+    _validate_and_harden_sqlite_file(raced_file)
+    assert (os.stat(raced_file).st_mode & 0o777) == 0o600
+
+    with pytest.raises(CacheError, match="symlink"):
+        _validate_and_harden_sqlite_file(sym_ext)

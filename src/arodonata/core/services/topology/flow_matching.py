@@ -39,6 +39,7 @@ def _match_l3_cross_interface_flows(
     internal_static: Sequence[GatewayTopologyEntry],
     include_standby: bool,
     seen_flow_keys: set[tuple[str, str, str, str, str, str]],
+    ann_by_if_wildcard: dict[str, TopologyAnnotation] | None = None,
 ) -> list[TrafficFlowMatch]:
     """Match source and destination intervals onto distinct gateway interfaces via LPM."""
     matched_flows: list[TrafficFlowMatch] = []
@@ -49,6 +50,7 @@ def _match_l3_cross_interface_flows(
             external_if_names,
             has_live_routes=has_live_routes,
             ann_by_if_cidr=ann_by_if_cidr,
+            ann_by_if_wildcard=ann_by_if_wildcard,
             weights=weights,
             gw_trust_static=gw_trust_static,
             if_trust_static=if_trust_static,
@@ -64,6 +66,7 @@ def _match_l3_cross_interface_flows(
                 external_if_names,
                 has_live_routes=has_live_routes,
                 ann_by_if_cidr=ann_by_if_cidr,
+                ann_by_if_wildcard=ann_by_if_wildcard,
                 weights=weights,
                 gw_trust_static=gw_trust_static,
                 if_trust_static=if_trust_static,

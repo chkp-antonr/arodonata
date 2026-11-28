@@ -14,13 +14,16 @@ from arodonata.core.models.common import (
     QUERY_GROUP_BY_ALIASES,
     CacheMode,
     SyncScope,
-    expand_asset_type,
-    normalize_any_type,
+    partition_entity_types,
 )
 from arodonata.core.models.objects import CPObject
 from arodonata.core.models.services import CPService
 from arodonata.core.services.object_service import ObjectService
-from arodonata.core.services.search.terms import classify_search_term, matches_classified_term
+from arodonata.core.services.search.terms import (
+    asset_matches_classified_term,
+    classify_search_term,
+    matches_classified_term,
+)
 from arodonata.core.services.service_cache import ServiceCacheService
 
 _CANONICAL_ASSET_TYPES_LOWER: frozenset[str] = frozenset(t.lower() for t in CANONICAL_ASSET_TYPES)
@@ -77,46 +80,32 @@ def resolve_query_scopes(
     group_by_attrs: Sequence[str] | None = None,
 ) -> tuple[list[str] | None, bool, bool, bool]:
     """Normalize `types` filters and compute `(requested_types, want_objects, want_services, want_assets)`."""
-    requested_types: list[str] | None = None
     if types is not None:
-        requested_types = []
-        seen_req_types: set[str] = set()
-        for raw_t in types:
-            clean_t = str(raw_t or "").strip()
-            if not clean_t:
-                continue
-            any_t = normalize_any_type(clean_t)
-            candidates = (
-                tuple(t.lower() for t in expand_asset_type(clean_t))
-                if any_t.lower() in _CANONICAL_ASSET_TYPES_LOWER
-                else (any_t,)
-            )
-            for candidate in candidates:
-                if candidate not in seen_req_types:
-                    seen_req_types.add(candidate)
-                    requested_types.append(candidate)
+        part = partition_entity_types(types)
+        if part.is_explicit_empty:
+            return [], False, False, False
+        requested_types = [
+            *part.object_types,
+            *part.service_types,
+            *(t.lower() for t in part.asset_types),
+        ]
+        return requested_types, bool(part.object_types), bool(part.service_types), bool(part.asset_types)
 
-    if requested_types is None:
-        has_service_filter = port is not None or protocol is not None
-        has_asset_filter = (
-            parent_id is not None
-            or parent_asset_id is not None
-            or roles is not None
-            or platforms is not None
-            or is_policy_target is not None
-            or is_execution_target is not None
-            or bool(
-                set(group_by_attrs or ()) & {"asset_role", "platform_family", "is_policy_target", "is_execution_target"}
-            )
+    has_service_filter = port is not None or protocol is not None
+    has_asset_filter = (
+        parent_id is not None
+        or parent_asset_id is not None
+        or roles is not None
+        or platforms is not None
+        or is_policy_target is not None
+        or is_execution_target is not None
+        or bool(
+            set(group_by_attrs or ()) & {"asset_role", "platform_family", "is_policy_target", "is_execution_target"}
         )
-        if has_service_filter or has_asset_filter:
-            return None, False, has_service_filter, has_asset_filter
-        return None, True, False, False
-
-    want_objects = any(not t.startswith("service-") and t not in _CANONICAL_ASSET_TYPES_LOWER for t in requested_types)
-    want_services = any(t.startswith("service-") for t in requested_types)
-    want_assets = any(t in _CANONICAL_ASSET_TYPES_LOWER for t in requested_types)
-    return requested_types, want_objects, want_services, want_assets
+    )
+    if has_service_filter or has_asset_filter:
+        return None, False, has_service_filter, has_asset_filter
+    return None, True, False, False
 
 
 def _parse_and_validate_group_by(group_by: Sequence[str] | None) -> list[tuple[str, list[str]]]:
@@ -245,7 +234,7 @@ def _apply_query_filters(
             item
             for item in combined_items
             if (isinstance(item, CPObject) and matches_classified_term(item, ip_term))
-            or (isinstance(item, Asset) and item.ipv4_address == ip_subnet.strip())
+            or (isinstance(item, Asset) and asset_matches_classified_term(item, ip_term))
         ]
 
     if port is not None:
@@ -487,12 +476,9 @@ async def query_objects_impl(
     )
 
     if cache_mode != "cache":
+        part = partition_entity_types(types) if types is not None else None
         if want_objects:
-            obj_types = (
-                [t for t in requested_types if not t.startswith("service-") and t not in _CANONICAL_ASSET_TYPES_LOWER]
-                if requested_types is not None
-                else None
-            )
+            obj_types = part.object_types if part is not None else None
             await svc._object_service.refresh_objects(
                 mgmt_name=mgmt_name,
                 domains=target_domains,
@@ -502,9 +488,7 @@ async def query_objects_impl(
                 cache_ttl=cache_ttl,
             )
         if want_services and svc._service_cache is not None:
-            svc_types = (
-                [t for t in requested_types if t.startswith("service-")] if requested_types is not None else None
-            )
+            svc_types = part.service_types if part is not None else None
             await svc._service_cache.refresh_services(
                 mgmt_name=mgmt_name,
                 domains=target_domains,

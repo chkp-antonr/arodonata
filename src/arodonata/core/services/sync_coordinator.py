@@ -839,7 +839,7 @@ class DomainSyncCoordinator:
         err_str = redact_sid(str(exc), known_sids=known_sids)
         async with state_lock:
             failed_domains[dom_label] = err_str
-        now = self._now()
+        self._now()
         for item_type in failed_types:
             prev = await self._cache.get_sync_state(dom.mgmt_name, dom.name, scope, item_type)
             await self._cache.upsert_sync_state(
@@ -850,7 +850,7 @@ class DomainSyncCoordinator:
                     item_type=item_type,
                     last_published_at=prev.last_published_at if prev else None,
                     last_session_uid=prev.last_session_uid if prev else None,
-                    synced_at=prev.synced_at if prev else now,
+                    synced_at=prev.synced_at if prev else None,
                     status="failed",
                     object_count=prev.object_count if prev else 0,
                     last_error=err_str,

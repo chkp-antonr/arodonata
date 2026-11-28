@@ -124,9 +124,40 @@ class AssetRefreshService:
                 all_assets = await self._cache.get_assets(mgmt_name=mgmt_name)
                 if not all_assets:
                     return
+                orig_by_id = {a.id: a for a in all_assets}
                 modified = self._vsx_manager.reconcile_cross_domain(all_assets)
                 if modified:
-                    await self._cache.upsert_assets(modified)
+                    updater = getattr(self._cache, "update_assets_vsx_links", None)
+                    if callable(updater):
+                        patches: list[tuple[str, datetime, dict[str, Any]]] = []
+                        for upd in modified:
+                            orig = orig_by_id.get(upd.id)
+                            if orig is None:
+                                continue
+                            changed_cols: dict[str, Any] = {}
+                            for field_name in (
+                                "parent_uid",
+                                "parent_name",
+                                "parent_id",
+                                "parent_asset_id",
+                                "virtual_system_uids",
+                                "virtual_system_asset_ids",
+                                "interfaces",
+                                "raw_data",
+                            ):
+                                new_val = getattr(upd, field_name)
+                                if new_val != getattr(orig, field_name):
+                                    changed_cols[field_name] = (
+                                        list(new_val)
+                                        if isinstance(new_val, list)
+                                        else (dict(new_val) if isinstance(new_val, dict) else new_val)
+                                    )
+                            if changed_cols:
+                                patches.append((upd.id, orig.updated_at, changed_cols))
+                        if patches:
+                            await updater(patches)
+                    else:
+                        await self._cache.upsert_assets(modified)
         except LockAcquisitionError as exc:
             logger.warning(
                 f"Skipped cross-domain VSX reconciliation for '{mgmt_name}' because lock '{lock_key}' was busy: {exc}",

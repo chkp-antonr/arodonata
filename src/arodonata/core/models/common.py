@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, overload
+from typing import Any, Literal, NamedTuple, overload
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -239,6 +239,89 @@ def normalize_any_type(item_type: str) -> str:
     return clean
 
 
+_GATEWAY_FAMILY_EXTRA_TYPES: tuple[str, ...] = (
+    "simple-gateway",
+    "simple-cluster",
+    "vsx-gateway",
+    "vsx-cluster",
+    "virtual-system",
+    "CpmiGatewayPlain",
+    "CpmiGatewayCluster",
+    "CpmiVsxNetobj",
+    "CpmiVsxClusterNetobj",
+    "CpmiVsNetobj",
+    "CpmiVsClusterNetobj",
+)
+
+
+class PartitionedEntityTypes(NamedTuple):
+    """Result of partitioning raw entity type filters into object, service, and asset scopes."""
+
+    object_types: list[str]
+    service_types: list[str]
+    asset_types: list[str]
+    is_explicit_empty: bool
+
+
+def partition_entity_types(
+    types: Sequence[str] | None,
+    *,
+    expand_gateway_family: bool = False,
+    group_as_service: bool = False,
+) -> PartitionedEntityTypes:
+    """Partition raw `types` filters into deduplicated `(object_types, service_types, asset_types, is_explicit_empty)`.
+
+    When `types` is `None`, returns empty lists and `is_explicit_empty=False`.
+    When `types` is non-`None` but contains no non-blank entries, returns `is_explicit_empty=True`.
+    """
+    if types is None:
+        return PartitionedEntityTypes([], [], [], False)
+
+    non_blank = [str(raw_t).strip() for raw_t in types if str(raw_t or "").strip()]
+    if not non_blank:
+        return PartitionedEntityTypes([], [], [], True)
+
+    object_types: list[str] = []
+    service_types: list[str] = []
+    asset_types: list[str] = []
+    seen_obj: set[str] = set()
+    seen_svc: set[str] = set()
+    seen_asset_lower: set[str] = set()
+
+    for raw_t in non_blank:
+        if group_as_service and raw_t.lower() == "group":
+            if "service-group" not in seen_svc:
+                seen_svc.add("service-group")
+                service_types.append("service-group")
+            continue
+
+        any_t = normalize_any_type(raw_t)
+        if any_t.lower() in _CANONICAL_ASSET_BY_LOWER:
+            for cand in expand_asset_type(raw_t):
+                low = cand.lower()
+                if low not in seen_asset_lower:
+                    seen_asset_lower.add(low)
+                    asset_types.append(cand)
+            if expand_gateway_family and raw_t.lower() == "gateway":
+                for cand in _GATEWAY_FAMILY_EXTRA_TYPES:
+                    low = cand.lower()
+                    if low not in seen_asset_lower:
+                        seen_asset_lower.add(low)
+                        asset_types.append(cand)
+        elif any_t.startswith("service-"):
+            svc_t = normalize_service_type(raw_t)
+            if svc_t and svc_t not in seen_svc:
+                seen_svc.add(svc_t)
+                service_types.append(svc_t)
+        else:
+            obj_t = normalize_object_type(raw_t)
+            if obj_t and obj_t not in seen_obj:
+                seen_obj.add(obj_t)
+                object_types.append(obj_t)
+
+    return PartitionedEntityTypes(object_types, service_types, asset_types, False)
+
+
 def utc_now() -> datetime:
     """Return current naive UTC datetime (tzinfo=None)."""
     return datetime.now(UTC).replace(tzinfo=None)
@@ -341,3 +424,14 @@ class ApiQueryResult(BaseModel):
     total: int = 0
     error_message: str | None = None
     code: str | None = None
+
+    def __repr__(self) -> str:
+        safe_objects = [sanitize_mapping(obj) if isinstance(obj, dict) else obj for obj in self.objects]
+        safe_err = redact_sid(self.error_message) if self.error_message else None
+        return (
+            f"ApiQueryResult(success={self.success!r}, objects={safe_objects!r}, "
+            f"total={self.total!r}, error_message={safe_err!r}, code={self.code!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()

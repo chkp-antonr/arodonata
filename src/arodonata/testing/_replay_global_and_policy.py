@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from arodonata.core.models.common import ApiCallResult
 
-from ._emulator_lookup import find_effective_object, preview_delete_unused_uids
+from ._emulator_lookup import as_list, find_effective_object, preview_delete_unused_uids, ref_uid
 from ._emulator_models import (
     CMD_TO_ENTITY_ACTION,
+    OBJ_TYPE_TO_SPEC,
     SidBinding,
     WorkSession,
     cp_error,
@@ -99,13 +100,16 @@ def preflight_target_uids(
     entity_map = CMD_TO_ENTITY_ACTION.get(command)
     if entity_map is not None:
         spec, action = entity_map
+        grp_spec = OBJ_TYPE_TO_SPEC["service-group" if spec.is_service else "group"]
+        existing_obj: Mapping[str, Any] | None = None
         if action in ("set", "delete"):
             lookup = str(req.get("uid") or req.get("name") or "")
             found = find_effective_object(
                 dom_files, global_files, dom_name, lookup, preferred_spec=spec, include_extras=False
             )
             if found is not None and found[0].get("uid"):
-                targets.add(str(found[0]["uid"]))
+                existing_obj = found[0]
+                targets.add(str(existing_obj["uid"]))
         elif action == "add" and bool(req.get("set-if-exists", False)):
             name = str(req.get("name") or "").strip()
             if name:
@@ -119,7 +123,28 @@ def preflight_target_uids(
                     include_extras=False,
                 )
                 if found is not None and found[0].get("uid"):
-                    targets.add(str(found[0]["uid"]))
+                    existing_obj = found[0]
+                    targets.add(str(existing_obj["uid"]))
+        if action in ("add", "set") and "groups" in req:
+            raw_groups = req["groups"]
+            group_refs = (
+                [*as_list(raw_groups.get("add")), *as_list(raw_groups.get("remove"))]
+                if isinstance(raw_groups, Mapping) and ("add" in raw_groups or "remove" in raw_groups)
+                else as_list(raw_groups)
+            )
+            for g_ref in group_refs:
+                g_hit = find_effective_object(
+                    dom_files, global_files, dom_name, ref_uid(g_ref), preferred_spec=grp_spec
+                )
+                if g_hit is not None and g_hit[0].get("uid"):
+                    targets.add(str(g_hit[0]["uid"]))
+            if existing_obj is not None and not (
+                isinstance(raw_groups, Mapping) and ("add" in raw_groups or "remove" in raw_groups)
+            ):
+                for cur_g in existing_obj.get("groups", []):
+                    cur_g_uid = ref_uid(cur_g)
+                    if cur_g_uid:
+                        targets.add(cur_g_uid)
         return targets
 
     matched_kind = next(
@@ -356,8 +381,35 @@ def handle_verify_or_install_policy(
     dom_files: Mapping[str, Any],
     global_files: Mapping[str, Any],
     wait_for_task: bool,
+    binding: SidBinding | None = None,
+    active_ws: WorkSession | None = None,
 ) -> ApiCallResult:
-    """Handle `verify-policy` and `install-policy` async task synthesis."""
+    """Handle `verify-policy` and `install-policy` session/domain guards and async task synthesis."""
+    if binding is not None or active_ws is not None:
+        if active_ws is None or active_ws.state != "open":
+            return cp_error(
+                "err_validation_failed",
+                f"{clean_cmd} requires an open session",
+                status_code=400,
+            )
+        if active_ws.read_only or (binding is not None and binding.read_only):
+            return cp_error(
+                "generic_err_operation_failed",
+                f"Cannot execute {clean_cmd} in read-only session [{active_ws.uid}]",
+                status_code=403,
+            )
+        if binding is not None and binding.domain != dom_name:
+            return cp_error(
+                "err_validation_failed",
+                f"Session bound to domain [{binding.domain}] cannot execute {clean_cmd} on domain [{dom_name}]",
+                status_code=400,
+            )
+        if active_ws.changes_count > 0 or active_ws.locked_uids:
+            return cp_error(
+                "generic_err_invalid_parameter",
+                f"{clean_cmd} requires a clean session with zero uncommitted changes",
+                status_code=400,
+            )
     pkg_lookup = str(req.get("policy-package") or req.get("package") or "").strip()
     all_pkgs = [
         pkg

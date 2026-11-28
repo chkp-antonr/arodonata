@@ -11,16 +11,15 @@ from mcp.types import CallToolResult
 from arodonata.client import ArodonataClient
 from arodonata.core.models.assets import Asset
 from arodonata.core.models.common import (
-    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     DEFAULT_SERVICE_TYPES,
     SyncScope,
     expand_asset_types,
-    normalize_any_type,
     normalize_object_type,
     normalize_service_type,
+    partition_entity_types,
 )
-from arodonata.core.services.asset_service import _normalize_classification_filter
+from arodonata.core.services.asset_service import ClusterRelationshipManager, _normalize_classification_filter
 from arodonata.core.services.object_service import resolve_object_query_command
 from arodonata.core.services.search.query import _parse_and_validate_group_by, resolve_query_scopes
 from arodonata.core.services.service_cache import resolve_service_query_command
@@ -310,40 +309,61 @@ def register_object_tools(
         eff_domain = await validate_domain_or_fail(client, eff_mgmt, domain, allow_refresh=(mode != "cache"))
         expanded_types = expand_asset_types(types) if types else None
 
+        has_parent = bool(parent and parent.strip())
         if is_live:
-            payload: dict[str, Any] = {
-                "limit": max(1, min(limit, 500)),
-                "offset": max(0, offset),
-                "details-level": details_level,
-            }
-            res = await client.api_call(eff_mgmt, "show-gateways-and-servers", payload, domain=eff_domain)
-            if not res.success:
+            q_res = await client.api_query(
+                eff_mgmt,
+                "show-gateways-and-servers",
+                domain=eff_domain,
+                details_level=details_level or "full",
+            )
+            if not q_res.success:
                 raise ToolFailure(
                     f"show-gateways-and-servers failed on {eff_mgmt!r} ({eff_domain or 'default'}): "
-                    f"{res.error_message or 'API error'}",
+                    f"{q_res.error_message or 'API error'}",
                     mgmt_name=eff_mgmt,
                     domain=eff_domain,
                 )
-            objs_raw = res.data.get("objects", []) if isinstance(res.data.get("objects"), list) else []
-            known_sids = await collect_known_sids(client, eff_mgmt)
-            return json_tool_result(
-                {
-                    "from": res.data.get("from", (offset + 1) if objs_raw else 0),
-                    "to": res.data.get("to", offset + len(objs_raw)),
-                    "total": res.data.get("total", len(objs_raw)),
-                    "source": "live",
-                    "cache_age_seconds": None,
-                    "mgmt_name": eff_mgmt,
-                    "domain": eff_domain,
-                    "objects": objs_raw,
-                },
-                known_sids=known_sids,
+            live_assets = [
+                Asset.from_cp_dict(eff_mgmt, eff_domain or "", raw_obj)
+                for raw_obj in (q_res.objects or [])
+                if isinstance(raw_obj, dict)
+            ]
+            ClusterRelationshipManager().enrich(live_assets)
+            role_set = _normalize_classification_filter(roles)
+            platform_set = _normalize_classification_filter(platforms)
+            if has_parent:
+                assert parent is not None
+                assets = _filter_assets_by_parent(live_assets, parent, expanded_types)
+                if role_set is not None:
+                    assets = [a for a in assets if a.asset_role.lower() in role_set] if role_set else []
+                if platform_set is not None:
+                    assets = [a for a in assets if a.platform_family.lower() in platform_set] if platform_set else []
+            else:
+                assets = live_assets
+                if expanded_types is not None:
+                    type_set = {t.lower() for t in expanded_types}
+                    assets = [a for a in assets if a.type.lower() in type_set]
+                if role_set is not None:
+                    assets = [a for a in assets if a.asset_role.lower() in role_set] if role_set else []
+                if platform_set is not None:
+                    assets = [a for a in assets if a.platform_family.lower() in platform_set] if platform_set else []
+            filtered_live = _filter_assets(assets, filter)
+            serialized_live = [_serialize_asset(a, details_level=details_level) for a in filtered_live]
+            envelope_live = _build_page_envelope(
+                serialized_live,
+                limit=limit,
+                offset=offset,
+                source="live",
+                cache_age_seconds=None,
+                extra={"mgmt_name": eff_mgmt, "domain": eff_domain},
             )
+            known_sids = await collect_known_sids(client, eff_mgmt)
+            return json_tool_result(envelope_live, known_sids=known_sids)
 
         # When filtering by `parent`, load all domain assets first so parent -> member_uids can be resolved
         mode = await _upgrade_uninitialized_cache_mode(client, eff_mgmt, eff_domain, "assets", mode)
         await _enforce_live_quota_if_sync_required(client, eff_mgmt, eff_domain, "assets", mode)
-        has_parent = bool(parent and parent.strip())
         all_assets = await client.get_gateways(
             mgmt_name=eff_mgmt,
             domain=eff_domain,
@@ -414,16 +434,10 @@ def register_object_tools(
         )
         target_domains = clean_domains if domains is not None else ([eff_domain] if eff_domain else None)
 
-        raw_types = [t.strip() for t in types if t and t.strip()] if types else None
-        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-        want_search_assets = bool(
-            raw_types and any(normalize_any_type(t).lower() in canonical_assets_lower for t in raw_types)
-        )
-        want_search_objects = raw_types is None or any(
-            not normalize_any_type(t).startswith("service-")
-            and normalize_any_type(t).lower() not in canonical_assets_lower
-            for t in raw_types
-        )
+        part = partition_entity_types(types, expand_gateway_family=True)
+        raw_types = [t.strip() for t in types if t and t.strip()] if types is not None else None
+        want_search_assets = bool(part.asset_types)
+        want_search_objects = types is None or (not part.is_explicit_empty and bool(part.object_types))
         eff_mode = mode
         if want_search_objects:
             upgraded_obj = await _upgrade_uninitialized_cache_mode(
@@ -542,13 +556,12 @@ def register_object_tools(
             cache_mode=mode,
         )
 
-        canonical_asset_types_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
         if aggregate == "describe":
-            requested_types: list[str] | None = None
             want_objects, want_services, want_assets = True, False, False
+            q_part = None
         else:
             group_specs = _parse_and_validate_group_by(group_by)
-            requested_types, want_objects, want_services, want_assets = resolve_query_scopes(
+            _requested_types, want_objects, want_services, want_assets = resolve_query_scopes(
                 types,
                 port=port,
                 protocol=protocol,
@@ -560,21 +573,14 @@ def register_object_tools(
                 is_execution_target=is_execution_target,
                 group_by_attrs=[ca for ca, _ in group_specs],
             )
+            q_part = partition_entity_types(types) if types is not None else None
 
         target_scopes: list[tuple[SyncScope, list[str] | None]] = []
         if want_objects:
-            obj_item_types = (
-                [t for t in requested_types if not t.startswith("service-") and t not in canonical_asset_types_lower]
-                if requested_types is not None
-                else None
-            )
+            obj_item_types = q_part.object_types if q_part is not None else None
             target_scopes.append(("objects", obj_item_types or None))
         if want_services:
-            svc_item_types = (
-                [t for t in requested_types if t.startswith("service-")]
-                if requested_types is not None
-                else list(DEFAULT_SERVICE_TYPES)
-            )
+            svc_item_types = q_part.service_types if q_part is not None else list(DEFAULT_SERVICE_TYPES)
             target_scopes.append(("services", svc_item_types or None))
         if want_assets:
             target_scopes.append(("assets", None))

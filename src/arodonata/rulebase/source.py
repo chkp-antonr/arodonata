@@ -131,43 +131,67 @@ class CachedRulebaseSource:
         non_global = [d for d in candidate_domains if d != "Global"]
 
         target = target_name_or_uid.strip()
+        target_low = target.lower()
 
         async def _find_matches(dom_list: list[str]) -> list[tuple[str, str]]:
-            found: list[tuple[str, str]] = []
+            exact_found: list[tuple[str, str]] = []
+            ci_found: list[tuple[str, str]] = []
             for dom in dom_list:
                 if kind == "package":
                     pkg_snap = await self._cache.get_domain_rulebase_packages(mgmt_name, dom)
-                    pkg_uid_found: str | None = None
+                    pkg_uid_exact: str | None = None
+                    pkg_uid_ci: str | None = None
                     for pl in pkg_snap.package_layers:
                         if pl.package_uid == target or pl.package_name == target:
-                            pkg_uid_found = pl.package_uid
+                            pkg_uid_exact = pl.package_uid
                             break
-                    if pkg_uid_found is None:
+                        if pkg_uid_ci is None and (
+                            pl.package_uid.lower() == target_low or pl.package_name.lower() == target_low
+                        ):
+                            pkg_uid_ci = pl.package_uid
+                    if pkg_uid_exact is None:
                         for nr in pkg_snap.nat_rules:
                             if nr.package_uid == target or nr.package_name == target:
-                                pkg_uid_found = nr.package_uid
+                                pkg_uid_exact = nr.package_uid
                                 break
-                    if pkg_uid_found is not None:
-                        found.append((dom, pkg_uid_found))
+                            if pkg_uid_ci is None and (
+                                nr.package_uid.lower() == target_low or nr.package_name.lower() == target_low
+                            ):
+                                pkg_uid_ci = nr.package_uid
+                    if pkg_uid_exact is not None:
+                        exact_found.append((dom, pkg_uid_exact))
+                    elif pkg_uid_ci is not None:
+                        ci_found.append((dom, pkg_uid_ci))
                 else:
                     snap = await self._cache.get_domain_rulebase(mgmt_name, dom)
-                    layer_uid_found: str | None = None
+                    layer_uid_exact: str | None = None
+                    layer_uid_ci: str | None = None
                     for l_entry in snap.layers:
                         if rulebase_type is not None and l_entry.rulebase_type != rulebase_type:
                             continue
                         if l_entry.uid == target or l_entry.name == target:
-                            layer_uid_found = l_entry.uid
+                            layer_uid_exact = l_entry.uid
                             break
-                    if layer_uid_found is None:
+                        if layer_uid_ci is None and (
+                            l_entry.uid.lower() == target_low or l_entry.name.lower() == target_low
+                        ):
+                            layer_uid_ci = l_entry.uid
+                    if layer_uid_exact is None:
                         for pl in snap.package_layers:
                             if rulebase_type is not None and pl.rulebase_type != rulebase_type:
                                 continue
                             if pl.layer_uid == target or pl.layer_name == target:
-                                layer_uid_found = pl.layer_uid
+                                layer_uid_exact = pl.layer_uid
                                 break
-                    if layer_uid_found is not None:
-                        found.append((dom, layer_uid_found))
-            return found
+                            if layer_uid_ci is None and (
+                                pl.layer_uid.lower() == target_low or pl.layer_name.lower() == target_low
+                            ):
+                                layer_uid_ci = pl.layer_uid
+                    if layer_uid_exact is not None:
+                        exact_found.append((dom, layer_uid_exact))
+                    elif layer_uid_ci is not None:
+                        ci_found.append((dom, layer_uid_ci))
+            return exact_found or ci_found
 
         matches = await _find_matches(candidate_domains)
         if not matches and cache_mode != "cache" and self._refresh_service is not None:
@@ -269,16 +293,34 @@ class CachedRulebaseSource:
 
         snapshot = await self._cache.get_domain_rulebase(mgmt_name, domain_name)
         target = package.strip()
+        target_low = target.lower()
         pkg_uid = target
-        for pl in snapshot.package_layers:
-            if pl.package_uid == target or pl.package_name == target:
-                pkg_uid = pl.package_uid
-                break
-        else:
-            for nr in snapshot.nat_rules:
-                if nr.package_uid == target or nr.package_name == target:
-                    pkg_uid = nr.package_uid
+        resolved_pkg = False
+        for case_insensitive in (False, True):
+            for pl in snapshot.package_layers:
+                matched = (
+                    (pl.package_uid.lower() == target_low or pl.package_name.lower() == target_low)
+                    if case_insensitive
+                    else (pl.package_uid == target or pl.package_name == target)
+                )
+                if matched:
+                    pkg_uid = pl.package_uid
+                    resolved_pkg = True
                     break
+            if resolved_pkg:
+                break
+            for nr in snapshot.nat_rules:
+                matched = (
+                    (nr.package_uid.lower() == target_low or nr.package_name.lower() == target_low)
+                    if case_insensitive
+                    else (nr.package_uid == target or nr.package_name == target)
+                )
+                if matched:
+                    pkg_uid = nr.package_uid
+                    resolved_pkg = True
+                    break
+            if resolved_pkg:
+                break
 
         st_slice = await self._cache.get_sync_state(
             mgmt_name,

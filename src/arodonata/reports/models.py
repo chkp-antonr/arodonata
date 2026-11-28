@@ -40,6 +40,7 @@ WarningCode = Literal[
     "session_fetch_failed",
     "changes_fetch_failed",
     "range_session_not_found",
+    "range_session_timestamp_missing",
     "names_unresolved",
     "owned_session_not_used",
     "owned_session_error",

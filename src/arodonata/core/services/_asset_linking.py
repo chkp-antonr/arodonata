@@ -122,6 +122,11 @@ def _parse_vs_slot_metadata(slot_obj: Mapping[str, Any]) -> tuple[str, str]:
     return slot_name, target_domain
 
 
+def _is_excluded_cluster_member(asset: Asset) -> bool:
+    """Return `True` if `asset` is a Virtual System that must never be linked as a cluster member."""
+    return asset.type in VSX_CHILD_TYPES or "virtual-system" in asset.type.lower()
+
+
 def _link_parent_and_child_assets(
     parent: Asset,
     child: Asset,
@@ -131,7 +136,11 @@ def _link_parent_and_child_assets(
     """Bidirectionally link `child` -> `parent` and register `child` on `parent`'s member/VS list."""
     if parent.uid == child.uid or parent.id == child.id:
         return parent, child, False
-    if list_kind == "vsx" and _is_excluded_vsx_child(child):
+    if list_kind == "cluster" and _is_excluded_cluster_member(child):
+        return parent, child, False
+    if list_kind == "vsx" and (
+        _is_excluded_vsx_child(child) or parent.type in CLUSTER_MEMBER_TYPES or "member" in parent.type.lower()
+    ):
         return parent, child, False
     changed = False
     updated_child = child
@@ -297,6 +306,10 @@ class ClusterRelationshipManager:
             discovered_member_asset_ids: list[str] = list(asset.member_asset_ids)
 
             for item in raw_members:
+                if isinstance(item, dict):
+                    raw_item_type = str(item.get("type") or "")
+                    if raw_item_type in VSX_CHILD_TYPES or "virtual-system" in raw_item_type.lower():
+                        continue
                 member_asset = _resolve_local_asset_ref(item, by_uid, by_name)
                 if member_asset is None and isinstance(item, dict):
                     m_uid = str(item.get("uid") or "")
@@ -314,7 +327,7 @@ class ClusterRelationshipManager:
                         )
                         _store_cluster(member_asset)
 
-                if member_asset is not None:
+                if member_asset is not None and not _is_excluded_cluster_member(member_asset):
                     upd_parent, upd_member, _ = _link_parent_and_child_assets(
                         by_uid[asset.uid], member_asset, list_kind="cluster"
                     )
@@ -325,8 +338,8 @@ class ClusterRelationshipManager:
 
             for m_uid in discovered_member_uids:
                 m_obj = by_uid.get(m_uid)
-                if m_obj is not None:
-                    if m_obj.type not in VSX_CHILD_TYPES and not m_obj.parent_uid:
+                if m_obj is not None and not _is_excluded_cluster_member(m_obj):
+                    if not m_obj.parent_uid:
                         upd_parent, upd_member, changed = _link_parent_and_child_assets(
                             by_uid[asset.uid], m_obj, list_kind="cluster"
                         )
@@ -681,7 +694,11 @@ class VSXRelationshipManager:
                     return by_mgmt_uid[(mgmt_name, ref)]
                 candidates = [c for c in by_name.get(ref, []) if c.mgmt_name == mgmt_name]
                 if prefer_vsx_parent:
-                    vsx_candidates = [c for c in candidates if c.type in VSX_PARENT_TYPES or "vsx" in c.type.lower()]
+                    vsx_candidates = [
+                        c
+                        for c in candidates
+                        if c.type in VSX_PARENT_TYPES or ("vsx" in c.type.lower() and "member" not in c.type.lower())
+                    ]
                     if vsx_candidates:
                         return vsx_candidates[0]
                 return candidates[0] if candidates else None

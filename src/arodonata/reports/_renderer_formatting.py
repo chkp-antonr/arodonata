@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from arodonata.core.primitives import escape_markdown_cell, escape_markdown_code
 from arodonata.reports._object_summary import (
     render_object_details_with_diffs,
 )
@@ -60,6 +61,11 @@ def render_safe_inline_markdown_html(text: str) -> str:
     return "".join(out)
 
 
+def _escape_inline_md_fragment(raw: str, *, quote: bool) -> str:
+    """Escape HTML characters, literal backslashes, and Markdown brackets inside inline fragments."""
+    return html.escape(raw, quote=quote).replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
 def render_safe_inline_markdown_md(text: str) -> str:
     """Sanitize inline markdown for Markdown output (neutralizing HTML tags and unsafe link/image schemes)."""
     if not text:
@@ -73,23 +79,23 @@ def render_safe_inline_markdown_md(text: str) -> str:
         if part.startswith("`") and part.endswith("`") and len(part) >= 2:
             out.append(f"`{html.escape(part[1:-1], quote=False)}`")
         elif part.startswith("**") and part.endswith("**") and len(part) >= 4:
-            inner = html.escape(part[2:-2], quote=True).replace("[", "\\[").replace("]", "\\]")
+            inner = _escape_inline_md_fragment(part[2:-2], quote=True)
             out.append(f"**{inner}**")
         elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
-            inner = html.escape(part[1:-1], quote=True).replace("[", "\\[").replace("]", "\\]")
+            inner = _escape_inline_md_fragment(part[1:-1], quote=True)
             out.append(f"*{inner}*")
         elif part.startswith("!["):
-            out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
+            out.append(_escape_inline_md_fragment(part, quote=True))
         elif part.startswith("[") and "](" in part and part.endswith(")"):
             bracket_end = part.find("](")
-            label = html.escape(part[1:bracket_end], quote=False).replace("[", "\\[").replace("]", "\\]")
+            label = _escape_inline_md_fragment(part[1:bracket_end], quote=False)
             href = part[bracket_end + 2 : -1].strip()
             if _is_safe_href(href):
                 out.append(f"[{label}]({html.escape(href, quote=True)})")
             else:
-                out.append(html.escape(part, quote=True).replace("[", "\\[").replace("]", "\\]"))
+                out.append(_escape_inline_md_fragment(part, quote=True))
         else:
-            out.append(html.escape(part, quote=False).replace("[", "\\[").replace("]", "\\]"))
+            out.append(_escape_inline_md_fragment(part, quote=False))
     return "".join(out)
 
 
@@ -102,25 +108,11 @@ def _esc_html(val: Any) -> str:
 
 
 def _esc_md(val: Any) -> str:
-    if val is None:
-        return ""
-    raw = ", ".join(str(x) for x in val) if isinstance(val, list) else str(val)
-    escaped = html.escape(raw, quote=False)
-    return (
-        escaped.replace("|", "\\|")
-        .replace("\r\n", " ")
-        .replace("\r", " ")
-        .replace("\n", " ")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("`", "\\`")
-    )
+    return escape_markdown_cell(val)
 
 
 def _esc_md_code(val: Any) -> str:
-    if val is None:
-        return ""
-    return str(val).replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("|", "\\|").replace("`", "'")
+    return escape_markdown_code(val)
 
 
 def _format_dt_utc(dt: datetime | None) -> str:

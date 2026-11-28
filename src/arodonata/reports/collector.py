@@ -20,7 +20,13 @@ from typing import Any, Protocol
 
 import arlogi
 
-from arodonata.core.errors import ChangeReportInputError, ServerIdentityError, redact_sid, sanitize_mapping
+from arodonata.core.errors import (
+    ChangeReportInputError,
+    ServerIdentityError,
+    is_not_found_error,
+    redact_sid,
+    sanitize_mapping,
+)
 from arodonata.core.models.common import ApiCallResult, parse_cp_publish_timestamp, utc_now
 from arodonata.core.ports import ApiPort, ObjectCachePort, RulebaseCachePort, ServiceCachePort, SyncStatePort
 from arodonata.core.telemetry import span_attrs, traced
@@ -283,19 +289,27 @@ async def _resolve_session_bare_uids(
                 server_ip=owned_ctx.server_ip,
             )
             if not obj_res.success and used_owned_on_call:
-                err_owned = redact_sid(
-                    obj_res.error_message or obj_res.error_code or "show-object failed",
-                    known_sids=known_sids,
-                )
-                owned_ctx.disable(
-                    message=f"OwnedSession failed on show-object for UID {u} ({err_owned}); retrying read-only.",
-                )
-                obj_res = await api.api_call(
-                    mgmt_name,
-                    "show-object",
-                    {"uid": u, "details-level": "standard"},
-                    domain=dom_name or None,
-                )
+                if is_not_found_error(obj_res.status_code, obj_res.error_code, obj_res.error_message):
+                    obj_res = await api.api_call(
+                        mgmt_name,
+                        "show-object",
+                        {"uid": u, "details-level": "standard"},
+                        domain=dom_name or None,
+                    )
+                else:
+                    err_owned = redact_sid(
+                        obj_res.error_message or obj_res.error_code or "show-object failed",
+                        known_sids=known_sids,
+                    )
+                    owned_ctx.disable(
+                        message=f"OwnedSession failed on show-object for UID {u} ({err_owned}); retrying read-only.",
+                    )
+                    obj_res = await api.api_call(
+                        mgmt_name,
+                        "show-object",
+                        {"uid": u, "details-level": "standard"},
+                        domain=dom_name or None,
+                    )
         except ServerIdentityError:
             raise
         except Exception as exc:

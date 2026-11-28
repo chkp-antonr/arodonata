@@ -42,6 +42,7 @@ except ImportError:
     _HAVE_CRYPTOGRAPHY = False
 
 from arodonata.adapters.checkpoint.tls import compute_der_fingerprint
+from arodonata.core.errors import ValidationError
 from arodonata.core.telemetry import span_attrs, traced
 from arodonata.testing.dataset_generator import DEFAULT_DATASET_DIR, ensure_enterprise_raw_dataset
 from arodonata.testing.replay_mock import FileReplayApiMock, ReplayStateSnapshot
@@ -415,14 +416,19 @@ class CheckPointReplayHttpServer:
                 session_uid=binding.session_uid,
             )
 
-        res = await self._api_mock.api_call(
-            "mds",
-            command,
-            payload,
-            domain=resolved_domain,
-            sid=sid,
-            wait_for_task=False,
-        )
+        try:
+            res = await self._api_mock.api_call(
+                "mds",
+                command,
+                payload,
+                domain=resolved_domain,
+                sid=sid,
+                wait_for_task=False,
+            )
+        except ValidationError as exc:
+            span_attrs(status_code=400, success=False, error_code="err_validation_failed")
+            trace.get_current_span().set_status(Status(StatusCode.ERROR, "err_validation_failed"))
+            return web.json_response({"code": "err_validation_failed", "message": str(exc)}, status=400)
 
         resp_data = res.data
         if (

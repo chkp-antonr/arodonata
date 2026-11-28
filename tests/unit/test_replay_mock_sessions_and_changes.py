@@ -948,3 +948,82 @@ async def test_switch_session_rotation_readonly_disconnect_guard_and_zero_disk_d
     api2.bump_published_session("DC_Spine", new_session_uid="bumped-head-1")
     api2.reset()
     assert disk_loads == []
+
+
+@pytest.mark.spec("SCN-ITEST-022-2")
+@pytest.mark.asyncio
+async def test_scn_itest_022_2_http_400_on_malformed_cmd_and_verify_install_policy_guards() -> None:
+    """SCN-ITEST-022-2: JSON 400 on malformed command names, verify-policy mutating contract, and session/domain guards."""
+    import aiohttp
+
+    from arodonata.core.primitives import READONLY_EXACT_COMMANDS, is_readonly_command
+    from arodonata.testing._emulator_models import is_mutating_command
+    from arodonata.testing.mock_server import CheckPointReplayHttpServer
+
+    # 1. Core primitives & emulator mutating classification parity (DA-045)
+    assert "verify-policy" not in READONLY_EXACT_COMMANDS
+    assert is_readonly_command("verify-policy") is False
+    assert is_mutating_command("install-policy") is True
+
+    # 2. HTTP server returns JSON HTTP 400 (err_validation_failed) on malformed commands
+    server = CheckPointReplayHttpServer(host="127.0.0.1", port=0)
+    await server.start()
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as http_sess:
+            login_resp = await http_sess.post(
+                f"{server.base_url}/login",
+                json={"api-key": "test-key", "domain": "Branch"},
+            )
+            assert login_resp.status == 200
+            sid = (await login_resp.json())["sid"]
+
+            bad_resp = await http_sess.post(
+                f"{server.base_url}/INVALID_CMD!",
+                headers={"X-chkp-sid": sid},
+                json={},
+            )
+            assert bad_resp.status == 400
+            bad_body = await bad_resp.json()
+            assert bad_body["code"] == "err_validation_failed"
+    finally:
+        await server.stop()
+
+    # 3. verify-policy / install-policy enforce read-only, cross-domain, clean-session, and open-session guards
+    api = FileReplayApiMock()
+    ro_login = await api.api_call("mds", "login", {"api-key": "test-key", "domain": "Branch", "read-only": True})
+    assert ro_login.success
+    ro_sid = ro_login.data["sid"]
+    rw_sid, _ = await api.create_dedicated_session("mds", "Branch")
+    other_sid, _ = await api.create_dedicated_session("mds", "Regional")
+
+    pkg_res = await api.api_call("mds", "show-packages", {}, domain="Branch", sid=rw_sid)
+    pkg_name = pkg_res.data["objects"][0]["name"]
+
+    for cmd, extra in (("verify-policy", {}), ("install-policy", {"targets": ["all"]})):
+        ro_res = await api.api_call("mds", cmd, {"policy-package": pkg_name, **extra}, domain="Branch", sid=ro_sid)
+        assert not ro_res.success and ro_res.status_code in (400, 403)
+
+        cross_res = await api.api_call(
+            "mds", cmd, {"policy-package": pkg_name, **extra}, domain="Branch", sid=other_sid
+        )
+        assert not cross_res.success and cross_res.status_code == 400
+
+    # Dirty session (uncommitted host add) MUST be blocked until discard/publish
+    add_res = await api.api_call(
+        "mds", "add-host", {"name": "H_Dirty_Guard", "ipv4-address": "10.98.0.1"}, domain="Branch", sid=rw_sid
+    )
+    assert add_res.success
+    dirty_vp = await api.api_call("mds", "verify-policy", {"policy-package": pkg_name}, domain="Branch", sid=rw_sid)
+    assert not dirty_vp.success and dirty_vp.status_code == 400
+
+    await api.api_call("mds", "discard", {}, domain="Branch", sid=rw_sid)
+    clean_vp = await api.api_call("mds", "verify-policy", {"policy-package": pkg_name}, domain="Branch", sid=rw_sid)
+    assert clean_vp.success
+
+    # Disconnected session must also be blocked
+    await api.api_call("mds", "disconnect", {}, domain="Branch", sid=rw_sid)
+    disc_ip = await api.api_call(
+        "mds", "install-policy", {"policy-package": pkg_name, "targets": ["all"]}, domain="Branch", sid=rw_sid
+    )
+    assert not disc_ip.success and disc_ip.status_code == 401

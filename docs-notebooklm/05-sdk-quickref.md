@@ -401,6 +401,8 @@ Exports (`__all__`): `ALL_DOMAINS, DATASET_VERSION, DEFAULT_DATASET_DIR, DEFAULT
 def __init__(self, dataset_dir: Path | str = DEFAULT_DATASET_DIR, *, cli_mock: FileReplayCliMock | None = None, allow_one_time_script: bool = True, allow_repository_script: bool = True, manage_repository_scripts: str = 'write', encode_repository_script_body_base64: bool = False) -> None
 @property def dataset_dir(self) -> Path
 @property def cli_mock(self) -> FileReplayCliMock
+@property def manage_repository_scripts(self) -> str
+def manage_repository_scripts(self, value: str) -> None
 @property def manifest(self) -> dict[str, Any]
 def reset_counters(self) -> None
 def get_active_sid_binding(self, sid: str | None) -> SidBinding | None

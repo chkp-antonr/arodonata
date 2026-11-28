@@ -417,6 +417,7 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
         route.get("dest")
         or route.get("destination")
         or route.get("subnet")
+        or route.get("subnet4")
         or route.get("address")
         or route.get("network")
     )
@@ -433,6 +434,8 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
             dest_raw.get("subnet-mask"),
             dest_raw.get("mask-length"),
             dest_raw.get("mask_length"),
+            dest_raw.get("mask-length4"),
+            dest_raw.get("mask_length4"),
             dest_raw.get("prefix-length"),
         )
         dest_raw = (
@@ -440,12 +443,17 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
             or dest_raw.get("ipv4-address")
             or dest_raw.get("address")
             or dest_raw.get("subnet")
+            or dest_raw.get("subnet4")
             or dest_raw.get("network")
             or ""
         )
 
     dest_str = str(dest_raw).strip()
-    if not dest_str or dest_str.lower() == "default" or dest_str == "0.0.0.0/0":
+    if not dest_str:
+        if route.get("type") == "default" or route.get("default") is True:
+            return ipaddress.IPv4Network("0.0.0.0/0")
+        return None
+    if dest_str.lower() == "default" or dest_str == "0.0.0.0/0":
         return ipaddress.IPv4Network("0.0.0.0/0")
 
     if "/" in dest_str:
@@ -461,6 +469,8 @@ def _parse_route_destination(route: dict[str, Any]) -> ipaddress.IPv4Network | N
         route.get("subnet-mask"),
         route.get("mask-length"),
         route.get("mask_length"),
+        route.get("mask-length4"),
+        route.get("mask_length4"),
         route.get("prefix-length"),
     )
     if mask_val is None and dest_str == "0.0.0.0":

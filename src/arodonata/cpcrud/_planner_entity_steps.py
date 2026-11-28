@@ -112,6 +112,12 @@ async def _find_active_where_used_refs(
                 ref_uid = str(item.get("uid") or "").strip()
                 ref_name = str(item.get("name") or "").strip()
                 ref_type = str(item.get("type") or "").strip().lower() or None
+                rule_obj = item.get("rule")
+                if not ref_uid and not ref_name and isinstance(rule_obj, Mapping):
+                    ref_uid = str(rule_obj.get("uid") or "").strip()
+                    ref_name = str(rule_obj.get("name") or "").strip()
+                    if ref_type is None:
+                        ref_type = "rule"
                 if (ref_uid or ref_name) and reader.is_entity_virtually_deleted(
                     mgmt_name,
                     domain_name,
@@ -121,15 +127,13 @@ async def _find_active_where_used_refs(
                 ):
                     continue
                 label = ref_name or ref_uid or f"{category}-entry"
-                if ref_uid and ref_name:
+                if isinstance(rule_obj, Mapping):
+                    r_name = str(rule_obj.get("name") or "").strip()
+                    r_uid = str(rule_obj.get("uid") or "").strip()
+                    r_num = item.get("position")
+                    label = r_name or r_uid or (f"rule#{r_num}" if r_num is not None else label)
+                elif ref_uid and ref_name:
                     label = f"{ref_name} ({ref_uid})"
-                elif not ref_uid and not ref_name:
-                    rule_obj = item.get("rule")
-                    if isinstance(rule_obj, Mapping):
-                        r_name = str(rule_obj.get("name") or "").strip()
-                        r_uid = str(rule_obj.get("uid") or "").strip()
-                        r_num = item.get("position")
-                        label = r_name or r_uid or (f"rule#{r_num}" if r_num is not None else label)
                 if label not in refs:
                     refs.append(label)
     return refs

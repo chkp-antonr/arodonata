@@ -21,11 +21,10 @@ from arodonata.core.config import ArodonataSettings
 from arodonata.core.context import get_write_session
 from arodonata.core.events import SyncProgressEvent
 from arodonata.core.models.common import (
-    CANONICAL_ASSET_TYPES,
     DEFAULT_OBJECT_TYPES,
     CacheMode,
-    normalize_any_type,
     normalize_object_type,
+    partition_entity_types,
     to_naive_utc,
     utc_now,
 )
@@ -104,19 +103,7 @@ class ObjectService:
     def _normalize_types(self, types: Sequence[str] | None) -> list[str]:
         if types is None:
             return list(DEFAULT_OBJECT_TYPES)
-        non_blank = [str(t).strip() for t in types if str(t).strip()]
-        if not non_blank:
-            return []
-        canonical_assets_lower = {t.lower() for t in CANONICAL_ASSET_TYPES}
-        seen: list[str] = []
-        for t in non_blank:
-            any_clean = normalize_any_type(t)
-            if any_clean.startswith("service-") or any_clean.lower() in canonical_assets_lower:
-                continue
-            clean = normalize_object_type(t)
-            if clean and clean not in seen:
-                seen.append(clean)
-        return seen
+        return partition_entity_types(types).object_types
 
     async def stream_refresh_objects(
         self,

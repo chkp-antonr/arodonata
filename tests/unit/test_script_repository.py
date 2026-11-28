@@ -1164,6 +1164,9 @@ async def test_decomposed_run_script_and_route_collection_helpers() -> None:
     upserted: list[Any] = []
 
     class _SyncCache:
+        async def get_sync_state(self, *_a: Any, **_kw: Any) -> None:
+            return None
+
         async def upsert_sync_state(self, state: Any) -> None:
             upserted.append(state)
 
@@ -1381,3 +1384,79 @@ async def test_repository_script_unsupported_error_and_active_ws_sid_scrubbing()
     assert "super-secret-pw" not in (st.error or "")
     assert leaked_sid not in (st.error or "")
     assert REDACTED_PLACEHOLDER in (st.error or "")
+
+
+@pytest.mark.spec("SCN-SESS-016-1")
+async def test_script_service_attributes_true_failing_stage_on_permission_error() -> None:
+    """SCN-SESS-016-1: ScriptRepositoryService reports exact stage on RepositoryScriptPermissionError."""
+    from contextlib import asynccontextmanager
+
+    from arodonata.core.context import WriteSession
+    from arodonata.core.errors import RepositoryScriptPermissionError, SessionError
+    from arodonata.core.models.common import ApiCallResult
+    from arodonata.core.services.script_service import ScriptRepositoryService
+
+    class _StageApi:
+        def __init__(self, fail_stage: str, *, exists: bool = False) -> None:
+            self.fail_stage = fail_stage
+            self.exists = exists
+
+        async def api_call(self, _m: str, cmd: str, _p: Any = None, **_k: Any) -> ApiCallResult:
+            if cmd == "show-repository-script":
+                if self.exists:
+                    return ApiCallResult(
+                        success=True,
+                        status_code=200,
+                        data={"uid": "s-1", "name": "demo", "script-body": "old\n"},
+                    )
+                return ApiCallResult(
+                    success=False,
+                    status_code=404,
+                    error_code="generic_err_object_not_found",
+                    error_message="not found",
+                )
+            if cmd == self.fail_stage:
+                raise SessionError(f"Permission denied calling {cmd}")
+            return ApiCallResult(success=True, status_code=200, data={"uid": "s-1", "name": "demo"})
+
+    @asynccontextmanager
+    async def _stage_ws_factory(
+        mgmt: str,
+        dom: str,
+        *,
+        fail_on_enter: bool = False,
+        fail_on_exit: bool = False,
+        **_kw: Any,
+    ) -> Any:
+        if fail_on_enter:
+            raise SessionError("Permission denied during login")
+        yield WriteSession(mgmt_name=mgmt, domain_name=dom, sid="ws-stage-sid", server_ip="10.0.0.1")
+        if fail_on_exit:
+            raise SessionError("Permission denied during publish")
+
+    # 1. Login permission failure -> operation == "login"
+    svc_login = ScriptRepositoryService(
+        api=_StageApi("none"),  # type: ignore[arg-type]
+        write_session_factory=lambda m, d, **kw: _stage_ws_factory(m, d, fail_on_enter=True, **kw),
+    )
+    with pytest.raises(RepositoryScriptPermissionError) as exc_login:
+        await svc_login.ensure_repository_script("mds1", "demo", "echo 1\n", domain="Corp")
+    assert exc_login.value.operation == "login"
+
+    # 2. Add mutation permission failure -> operation == "add-repository-script"
+    svc_add = ScriptRepositoryService(
+        api=_StageApi("add-repository-script"),  # type: ignore[arg-type]
+        write_session_factory=lambda m, d, **kw: _stage_ws_factory(m, d, **kw),
+    )
+    with pytest.raises(RepositoryScriptPermissionError) as exc_add:
+        await svc_add.ensure_repository_script("mds1", "demo", "echo 1\n", domain="Corp")
+    assert exc_add.value.operation == "add-repository-script"
+
+    # 3. Publish permission failure on delete -> operation == "publish"
+    svc_pub = ScriptRepositoryService(
+        api=_StageApi("none", exists=True),  # type: ignore[arg-type]
+        write_session_factory=lambda m, d, **kw: _stage_ws_factory(m, d, fail_on_exit=True, **kw),
+    )
+    with pytest.raises(RepositoryScriptPermissionError) as exc_pub:
+        await svc_pub.delete_repository_script("mds1", "demo", domain="Corp")
+    assert exc_pub.value.operation == "publish"

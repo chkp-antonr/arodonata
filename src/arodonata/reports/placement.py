@@ -383,7 +383,11 @@ async def apply_session_rule_placement(
 
     has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
     warmed_via_coordinator = False
-    if not has_cached_rules and refresh_rulebase_fn is not None and not is_system_or_empty_domain:
+    if (
+        (not has_cached_rules or sync_state is None)
+        and refresh_rulebase_fn is not None
+        and not is_system_or_empty_domain
+    ):
         warmed_via_coordinator = True
         try:
             await refresh_rulebase_fn(mgmt_name, clean_domain)
@@ -393,7 +397,7 @@ async def apply_session_rule_placement(
         except ServerIdentityError:
             raise
         except Exception:
-            has_cached_rules = False
+            has_cached_rules = _snapshot_has_rules_or_layers(cached_snapshot)
 
     if has_cached_rules:
         _apply_snapshot_locations_to_rules(session_report.rule_changes, cached_snapshot)

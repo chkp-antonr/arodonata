@@ -283,7 +283,12 @@ async def _compute_cache_age(
     elif item_type != "*":
         states = [s for s in states if s.item_type in (item_type, "*")]
 
-    synced_times = [s.synced_at for s in states if s.synced_at is not None]
+    synced_times = [
+        s.synced_at
+        for s in states
+        if s.synced_at is not None
+        and not (s.status == "failed" and s.object_count == 0 and s.last_published_at is None)
+    ]
     if not synced_times:
         return None
     stalest = min(synced_times)
